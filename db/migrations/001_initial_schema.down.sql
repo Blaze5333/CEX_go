@@ -1,0 +1,7 @@
+DROP INDEX IF EXISTS idx_candles_asset_interval_time;
+DROP TABLE IF EXISTS candles;
+DROP TABLE IF EXISTS transactions;
+DROP TABLE IF EXISTS trades;
+DROP TABLE IF EXISTS orders;
+DROP TABLE IF EXISTS balances;
+DROP TABLE IF EXISTS users;
