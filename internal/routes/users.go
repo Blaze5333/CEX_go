@@ -1,8 +1,6 @@
 package routes
 
 import (
-	"net/http"
-
 	"github.com/Blaze5333/cex/db/queries"
 	"github.com/Blaze5333/cex/internal/controllers"
 	"github.com/gin-gonic/gin"

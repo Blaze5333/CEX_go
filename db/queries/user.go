@@ -34,3 +34,16 @@ func (q *Queries) GetUserByEmail(email string) (string, string, error) {
 	}
 	return id, passwordHash, nil
 }
+
+func (q *Queries) GetUserByID(userID string) (string, error) {
+	var email string
+	err := q.db.QueryRow(`
+		SELECT email 
+		FROM users 
+		WHERE id = $1
+	`, userID).Scan(&email)
+	if err != nil {
+		return "", err
+	}
+	return email, nil
+}
