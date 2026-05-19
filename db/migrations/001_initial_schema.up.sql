@@ -47,7 +47,7 @@ CREATE TABLE orders (
     quantity      NUMERIC(28,8) NOT NULL CHECK (quantity > 0),
     price         NUMERIC(28,8)  CHECK (price >= 0), --price can be 0 for market orders
     side          TEXT        NOT NULL CHECK (side IN ('buy', 'sell')),
-    status        TEXT        NOT NULL CHECK (status IN ('open', 'filled', 'cancelled')),
+    status        TEXT        NOT NULL CHECK (status IN ('open', 'filled', 'cancelled', 'pending')),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     type          TEXT        NOT NULL CHECK (type IN ('limit', 'market'))
 );

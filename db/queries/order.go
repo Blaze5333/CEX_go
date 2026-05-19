@@ -16,13 +16,13 @@ func (q *Queries) CreateOrder(userId, marketId, orderType, side string, price, q
 		INSERT INTO orders (user_id, market_id, order_type, side, price, quantity, status)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id
-	`, userId, marketId, orderType, side, price, quantity, "open").Scan(&id)
+	`, userId, marketId, orderType, side, price, quantity, "pending").Scan(&id)
 	if err != nil {
 		log.Printf("%s CreateOrder: failed for userID=%s marketID=%s: %v", orderTag, userId, marketId, err)
 		return nil, err
 	}
 	log.Printf("%s CreateOrder: created order id=%s", orderTag, id)
-	return &models.Order{ID: id, UserID: userId, MarketID: marketId, OrderType: orderType, Side: side, Price: price, Quantity: quantity, Status: "open"}, nil
+	return &models.Order{ID: id, UserID: userId, MarketID: marketId, OrderType: orderType, Side: side, Price: price, Quantity: quantity, Status: "pending"}, nil
 }
 
 func (q *Queries) GetOrderByID(id string) (*models.Order, error) {

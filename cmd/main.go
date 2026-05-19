@@ -29,6 +29,18 @@ func main() {
 	}
 	log.Printf("%s postgres connected successfully", mainTag)
 	defer database.Close()
+	log.Printf("%s connecting to redis", mainTag)
+	redisConfig:=db.RedisConfig{
+		Addr: os.Getenv("REDIS_ADDR"),
+		Password: os.Getenv("REDIS_PASSWORD"),
+		DB: 0,
+	}
+	redisClient, err := redisConfig.NewRedisClient()
+	if err != nil {
+		log.Fatalf("%s failed to connect to redis: %v", mainTag, err)
+	}
+	log.Printf("%s redis connected successfully", mainTag)
+	defer redisClient.Close()
 
 	q := queries.New(database)
 
