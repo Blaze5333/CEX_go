@@ -2,44 +2,122 @@ package queries
 
 import (
 	"database/sql"
+	"log"
 
 	"github.com/Blaze5333/cex/internal/models"
 )
 
+const balanceTag = "[queries/balance]"
+
+func (q *Queries) GetDB() *sql.DB {
+	return q.db
+}
+
 func (q *Queries) LockBalance(userID, asset string, amount float64) error {
-	result, err := q.db.Exec(`
-		UPDATE balances
-		SET available = available - $1, locked = locked + $1
-		WHERE user_id = $2 AND asset = $3 AND available >= $1
+	log.Printf("%s LockBalance: userID=%s asset=%s amount=%f", balanceTag, userID, asset, amount)
+	tx, err := q.db.Begin()
+	if err != nil {
+		log.Printf("%s LockBalance: failed to begin transaction: %v", balanceTag, err)
+		return err
+	}
+	defer tx.Rollback()
+
+	var available float64
+	err = tx.QueryRow(`
+	   SELECT available
+	   FROM balances
+	   WHERE user_id = $1 AND asset = $2
+	   FOR UPDATE
+	`, userID, asset).Scan(&available)
+	if err != nil {
+		log.Printf("%s LockBalance: failed to query available balance for userID=%s asset=%s: %v", balanceTag, userID, asset, err)
+		return err
+	}
+	if available < amount {
+		log.Printf("%s LockBalance: insufficient balance for userID=%s asset=%s available=%f requested=%f", balanceTag, userID, asset, available, amount)
+		return sql.ErrNoRows
+	}
+
+	_, err = tx.Exec(`
+	   UPDATE balances
+	   SET available = available - $1, locked = locked + $1
+	   WHERE user_id = $2 AND asset = $3
 	`, amount, userID, asset)
 	if err != nil {
+		log.Printf("%s LockBalance: failed to update balance for userID=%s asset=%s: %v", balanceTag, userID, asset, err)
 		return err
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
+
+	if err = tx.Commit(); err != nil {
+		log.Printf("%s LockBalance: failed to commit transaction for userID=%s asset=%s: %v", balanceTag, userID, asset, err)
 		return err
 	}
-	if rows == 0 {
-		return sql.ErrNoRows // insufficient balance
-	}
+	log.Printf("%s LockBalance: successfully locked %f of %s for userID=%s", balanceTag, amount, asset, userID)
 	return nil
 }
 
 func (q *Queries) UnlockBalance(userID, asset string, amount float64) error {
-	_, err := q.db.Exec(`
+	log.Printf("%s UnlockBalance: userID=%s asset=%s amount=%f", balanceTag, userID, asset, amount)
+	tx, err := q.db.Begin()
+	if err != nil {
+		log.Printf("%s UnlockBalance: failed to begin transaction: %v", balanceTag, err)
+		return err
+	}
+	defer tx.Rollback()
+
+	var locked float64
+	err = tx.QueryRow("SELECT locked FROM balances WHERE user_id=$1 AND asset=$2 FOR UPDATE", userID, asset).Scan(&locked)
+	if err != nil {
+		log.Printf("%s UnlockBalance: failed to query locked balance for userID=%s asset=%s: %v", balanceTag, userID, asset, err)
+		return err
+	}
+	if locked < amount {
+		log.Printf("%s UnlockBalance: insufficient locked balance for userID=%s asset=%s locked=%f requested=%f", balanceTag, userID, asset, locked, amount)
+		return sql.ErrNoRows
+	}
+
+	_, err = tx.Exec(`
 		UPDATE balances
 		SET locked = locked - $1, available = available + $1
 		WHERE user_id = $2 AND asset = $3
 	`, amount, userID, asset)
-	return err
+	if err != nil {
+		log.Printf("%s UnlockBalance: failed to update balance for userID=%s asset=%s: %v", balanceTag, userID, asset, err)
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		log.Printf("%s UnlockBalance: failed to commit transaction for userID=%s asset=%s: %v", balanceTag, userID, asset, err)
+		return err
+	}
+	log.Printf("%s UnlockBalance: successfully unlocked %f of %s for userID=%s", balanceTag, amount, asset, userID)
+	return nil
 }
 
 func (q *Queries) TransferFromLocked(fromUserID, toUserID, asset string, amount float64) error {
+	log.Printf("%s TransferFromLocked: fromUserID=%s toUserID=%s asset=%s amount=%f", balanceTag, fromUserID, toUserID, asset, amount)
 	tx, err := q.db.Begin()
 	if err != nil {
+		log.Printf("%s TransferFromLocked: failed to begin transaction: %v", balanceTag, err)
 		return err
 	}
 	defer tx.Rollback()
+
+	var locked float64
+	err = tx.QueryRow(`
+		SELECT locked
+		FROM balances
+		WHERE user_id = $1 AND asset = $2
+		FOR UPDATE
+	`, fromUserID, asset).Scan(&locked)
+	if err != nil {
+		log.Printf("%s TransferFromLocked: failed to query locked balance for fromUserID=%s asset=%s: %v", balanceTag, fromUserID, asset, err)
+		return err
+	}
+	if locked < amount {
+		log.Printf("%s TransferFromLocked: insufficient locked balance for fromUserID=%s asset=%s locked=%f requested=%f", balanceTag, fromUserID, asset, locked, amount)
+		return sql.ErrNoRows
+	}
 
 	_, err = tx.Exec(`
 		UPDATE balances
@@ -47,6 +125,7 @@ func (q *Queries) TransferFromLocked(fromUserID, toUserID, asset string, amount 
 		WHERE user_id = $2 AND asset = $3
 	`, amount, fromUserID, asset)
 	if err != nil {
+		log.Printf("%s TransferFromLocked: failed to deduct locked balance for fromUserID=%s asset=%s: %v", balanceTag, fromUserID, asset, err)
 		return err
 	}
 
@@ -57,29 +136,43 @@ func (q *Queries) TransferFromLocked(fromUserID, toUserID, asset string, amount 
 		DO UPDATE SET available = balances.available + $3
 	`, toUserID, asset, amount)
 	if err != nil {
+		log.Printf("%s TransferFromLocked: failed to credit balance for toUserID=%s asset=%s: %v", balanceTag, toUserID, asset, err)
 		return err
 	}
 
-	return tx.Commit()
+	if err = tx.Commit(); err != nil {
+		log.Printf("%s TransferFromLocked: failed to commit transaction: %v", balanceTag, err)
+		return err
+	}
+	log.Printf("%s TransferFromLocked: successfully transferred %f of %s from userID=%s to userID=%s", balanceTag, amount, asset, fromUserID, toUserID)
+	return nil
 }
 
 func (q *Queries) CreditBalance(userID, asset string, amount float64) error {
+	log.Printf("%s CreditBalance: userID=%s asset=%s amount=%f", balanceTag, userID, asset, amount)
 	_, err := q.db.Exec(`
 		INSERT INTO balances (user_id, asset, available, locked)
 		VALUES ($1, $2, $3, 0)
 		ON CONFLICT (user_id, asset)
 		DO UPDATE SET available = balances.available + $3
 	`, userID, asset, amount)
-	return err
+	if err != nil {
+		log.Printf("%s CreditBalance: failed for userID=%s asset=%s: %v", balanceTag, userID, asset, err)
+		return err
+	}
+	log.Printf("%s CreditBalance: successfully credited %f of %s for userID=%s", balanceTag, amount, asset, userID)
+	return nil
 }
 
 func (q *Queries) GetBalances(userID string) ([]models.Balance, error) {
+	log.Printf("%s GetBalances: fetching balances for userID=%s", balanceTag, userID)
 	rows, err := q.db.Query(`
 		SELECT asset, available, locked
 		FROM balances
 		WHERE user_id = $1
 	`, userID)
 	if err != nil {
+		log.Printf("%s GetBalances: query failed for userID=%s: %v", balanceTag, userID, err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -88,20 +181,27 @@ func (q *Queries) GetBalances(userID string) ([]models.Balance, error) {
 	for rows.Next() {
 		var b models.Balance
 		if err := rows.Scan(&b.Asset, &b.Available, &b.Locked); err != nil {
+			log.Printf("%s GetBalances: failed to scan row for userID=%s: %v", balanceTag, userID, err)
 			return nil, err
 		}
 		balances = append(balances, b)
 	}
+	log.Printf("%s GetBalances: returned %d balance(s) for userID=%s", balanceTag, len(balances), userID)
 	return balances, nil
 }
+
 func (q *Queries) InitializeBalance(userID string) error {
+	log.Printf("%s InitializeBalance: initializing USD balance for userID=%s", balanceTag, userID)
 	_, err := q.db.Exec(`
 		INSERT INTO balances (user_id, asset, available, locked)
 		VALUES ($1, 'USD', 500, 0)
-	`,
-		userID,
-	)
-	return err
+	`, userID)
+	if err != nil {
+		log.Printf("%s InitializeBalance: failed for userID=%s: %v", balanceTag, userID, err)
+		return err
+	}
+	log.Printf("%s InitializeBalance: successfully initialized balance for userID=%s", balanceTag, userID)
+	return nil
 }
 
 //when user buys BTC or deposits usd so we need smart contract to update the balance of the user.\

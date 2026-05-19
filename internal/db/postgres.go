@@ -3,10 +3,13 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // registers "pgx" driver with database/sql
 )
+
+const postgresTag = "[db/postgres]"
 
 // PostgresConfig holds the connection-pool settings.
 type PostgresConfig struct {
@@ -20,7 +23,9 @@ type PostgresConfig struct {
 // NewPostgres opens a *sql.DB backed by pgx and verifies connectivity with
 // a ping.  Caller is responsible for calling db.Close() on shutdown.
 func NewPostgres(cfg PostgresConfig) (*sql.DB, error) {
+	log.Printf("%s NewPostgres: initializing postgres connection", postgresTag)
 	if cfg.DSN == "" {
+		log.Printf("%s NewPostgres: DSN is empty", postgresTag)
 		return nil, fmt.Errorf("db: postgres DSN must not be empty")
 	}
 
@@ -38,8 +43,10 @@ func NewPostgres(cfg PostgresConfig) (*sql.DB, error) {
 		cfg.ConnMaxIdleTime = 10 * time.Minute
 	}
 
+	log.Printf("%s NewPostgres: opening connection maxOpenConns=%d maxIdleConns=%d", postgresTag, cfg.MaxOpenConns, cfg.MaxIdleConns)
 	db, err := sql.Open("pgx", cfg.DSN)
 	if err != nil {
+		log.Printf("%s NewPostgres: failed to open postgres connection: %v", postgresTag, err)
 		return nil, fmt.Errorf("db: open postgres: %w", err)
 	}
 
@@ -49,9 +56,11 @@ func NewPostgres(cfg PostgresConfig) (*sql.DB, error) {
 	db.SetConnMaxIdleTime(cfg.ConnMaxIdleTime)
 
 	if err := db.Ping(); err != nil {
+		log.Printf("%s NewPostgres: failed to ping postgres: %v", postgresTag, err)
 		db.Close()
 		return nil, fmt.Errorf("db: ping postgres: %w", err)
 	}
 
+	log.Printf("%s NewPostgres: postgres connection established successfully", postgresTag)
 	return db, nil
 }

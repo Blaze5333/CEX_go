@@ -7,7 +7,6 @@ type Balance struct {
 }
 
 type DepositRequest struct {
-	UserID string  `json:"user_id" binding:"required"`
 	Asset  string  `json:"asset" binding:"required"`
 	Amount float64 `json:"amount" binding:"required,gt=0"`
 }
