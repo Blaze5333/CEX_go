@@ -12,6 +12,7 @@ type Order struct {
 	Quantity  float64   `json:"quantity"`
 	Status    string    `json:"status"` // "open", "filled", "partially_filled", "cancelled"
 	CreatedAt time.Time `json:"created_at"`
+	FilledQuantity    float64   `json:"filled_quantity"` // New field to track filled quantity
 }
 
 type CreateOrderRequest struct {

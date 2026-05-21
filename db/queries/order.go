@@ -22,19 +22,19 @@ func (q *Queries) CreateOrder(userId, marketId, orderType, side string, price, q
 		return nil, err
 	}
 	log.Printf("%s CreateOrder: created order id=%s", orderTag, id)
-	return &models.Order{ID: id, UserID: userId, MarketID: marketId, OrderType: orderType, Side: side, Price: price, Quantity: quantity, Status: "pending"}, nil
+	return &models.Order{ID: id, UserID: userId, MarketID: marketId, OrderType: orderType, Side: side, Price: price, Quantity: quantity, Status: "pending", FilledQuantity: 0}, nil
 }
 
 func (q *Queries) GetOrderByID(id string) (*models.Order, error) {
 	log.Printf("%s GetOrderByID: orderID=%s", orderTag, id)
 	var o models.Order
 	err := q.db.QueryRow(`
-		SELECT id, user_id, market_id, order_type, side, price, quantity, status, created_at
+		SELECT id, user_id, market_id, order_type, side, price, quantity, status, created_at, filled_quantity
 		FROM orders
 		WHERE id = $1
 	`, id).Scan(
 		&o.ID, &o.UserID, &o.MarketID, &o.OrderType, &o.Side,
-		&o.Price, &o.Quantity, &o.Status, &o.CreatedAt,
+		&o.Price, &o.Quantity, &o.Status, &o.CreatedAt, &o.FilledQuantity,
 	)
 	if err != nil {
 		log.Printf("%s GetOrderByID: order not found for id=%s: %v", orderTag, id, err)
@@ -47,7 +47,7 @@ func (q *Queries) GetOrderByID(id string) (*models.Order, error) {
 func (q *Queries) GetOrdersByUserID(userId string) ([]models.Order, error) {
 	log.Printf("%s GetOrdersByUserID: userID=%s", orderTag, userId)
 	rows, err := q.db.Query(`
-		SELECT id, user_id, market_id, order_type, side, price, quantity, status, created_at
+		SELECT id, user_id, market_id, order_type, side, price, quantity, status, created_at, filled_quantity
 		FROM orders
 		WHERE user_id = $1
 	`, userId)
@@ -62,7 +62,7 @@ func (q *Queries) GetOrdersByUserID(userId string) ([]models.Order, error) {
 		var o models.Order
 		if err := rows.Scan(
 			&o.ID, &o.UserID, &o.MarketID, &o.OrderType, &o.Side,
-			&o.Price, &o.Quantity, &o.Status, &o.CreatedAt,
+			&o.Price, &o.Quantity, &o.Status, &o.CreatedAt, &o.FilledQuantity,
 		); err != nil {
 			log.Printf("%s GetOrdersByUserID: failed to scan row for userID=%s: %v", orderTag, userId, err)
 			return nil, err
@@ -76,7 +76,7 @@ func (q *Queries) GetOrdersByUserID(userId string) ([]models.Order, error) {
 func (q *Queries) GetOrdersByMarketID(marketId string) ([]models.Order, error) {
 	log.Printf("%s GetOrdersByMarketID: marketID=%s", orderTag, marketId)
 	rows, err := q.db.Query(`
-		SELECT id, user_id, market_id, order_type, side, price, quantity, status, created_at
+		SELECT id, user_id, market_id, order_type, side, price, quantity, status, created_at, filled_quantity
 		FROM orders
 		WHERE market_id = $1
 	`, marketId)
@@ -91,7 +91,7 @@ func (q *Queries) GetOrdersByMarketID(marketId string) ([]models.Order, error) {
 		var o models.Order
 		if err := rows.Scan(
 			&o.ID, &o.UserID, &o.MarketID, &o.OrderType, &o.Side,
-			&o.Price, &o.Quantity, &o.Status, &o.CreatedAt,
+			&o.Price, &o.Quantity, &o.Status, &o.CreatedAt, &o.FilledQuantity,
 		); err != nil {
 			log.Printf("%s GetOrdersByMarketID: failed to scan row for marketID=%s: %v", orderTag, marketId, err)
 			return nil, err
@@ -101,7 +101,35 @@ func (q *Queries) GetOrdersByMarketID(marketId string) ([]models.Order, error) {
 	log.Printf("%s GetOrdersByMarketID: returned %d order(s) for marketID=%s", orderTag, len(orders), marketId)
 	return orders, nil
 }
+func (q *Queries) GetAllActiveOrders() ([]models.Order, error) {
+	log.Printf("%s GetAllActiveOrders", orderTag)
+	rows, err := q.db.Query(`
+		SELECT id, user_id, market_id, order_type, side, price, quantity, status, created_at, filled_quantity
+		FROM orders
+		WHERE status = 'open'
+		ORDER BY created_at ASC
+	`)
+	if err != nil {
+		log.Printf("%s GetAllActiveOrders: query failed: %v", orderTag, err)
+		return nil, err
+	}
+	defer rows.Close()
 
+	var orders []models.Order
+	for rows.Next() {
+		var o models.Order
+		if err := rows.Scan(
+			&o.ID, &o.UserID, &o.MarketID, &o.OrderType, &o.Side,
+			&o.Price, &o.Quantity, &o.Status, &o.CreatedAt, &o.FilledQuantity,
+		); err != nil {
+			log.Printf("%s GetAllActiveOrders: failed to scan row: %v", orderTag, err)
+			return nil, err
+		}
+		orders = append(orders, o)
+	}
+	log.Printf("%s GetAllActiveOrders: returned %d active order(s)", orderTag, len(orders))
+	return orders, nil
+}
 func (q *Queries) UpdateOrderStatus(id, status string) error {
 	log.Printf("%s UpdateOrderStatus: orderID=%s status=%s", orderTag, id, status)
 	_, err := q.db.Exec(`
@@ -138,7 +166,7 @@ func (q *Queries) GetOpenOrdersByMarket(marketID, side string) ([]models.Order, 
 		sortDir = "DESC"
 	}
 	rows, err := q.db.Query(`
-		SELECT id, user_id, market_id, order_type, side, price, quantity, status, created_at
+		SELECT id, user_id, market_id, order_type, side, price, quantity, status, created_at, filled_quantity
 		FROM orders
 		WHERE market_id = $1 AND side = $2 AND status = 'open'
 		ORDER BY price `+sortDir+`, created_at ASC
@@ -154,7 +182,7 @@ func (q *Queries) GetOpenOrdersByMarket(marketID, side string) ([]models.Order, 
 		var o models.Order
 		if err := rows.Scan(
 			&o.ID, &o.UserID, &o.MarketID, &o.OrderType, &o.Side,
-			&o.Price, &o.Quantity, &o.Status, &o.CreatedAt,
+			&o.Price, &o.Quantity, &o.Status, &o.CreatedAt, &o.FilledQuantity,
 		); err != nil {
 			log.Printf("%s GetOpenOrdersByMarket: failed to scan row for marketID=%s side=%s: %v", orderTag, marketID, side, err)
 			return nil, err
@@ -166,13 +194,13 @@ func (q *Queries) GetOpenOrdersByMarket(marketID, side string) ([]models.Order, 
 }
 
 // UpdateOrderStatusAndQuantity updates both status and remaining quantity after a partial or full fill.
-func (q *Queries) UpdateOrderStatusAndQuantity(id, status string, remainingQty float64) error {
-	log.Printf("%s UpdateOrderStatusAndQuantity: orderID=%s status=%s remainingQty=%f", orderTag, id, status, remainingQty)
+func (q *Queries) UpdateOrderStatusAndQuantity(id, status string, filledQty float64) error {
+	log.Printf("%s UpdateOrderStatusAndQuantity: orderID=%s status=%s filledQty=%f", orderTag, id, status, filledQty)
 	_, err := q.db.Exec(`
 		UPDATE orders
-		SET status = $1, quantity = $2
+		SET status = $1, filled_quantity = $2
 		WHERE id = $3
-	`, status, remainingQty, id)
+	`, status, filledQty, id)
 	if err != nil {
 		log.Printf("%s UpdateOrderStatusAndQuantity: failed for orderID=%s: %v", orderTag, id, err)
 		return err

@@ -50,6 +50,8 @@ CREATE TABLE orders (
     status        TEXT        NOT NULL CHECK (status IN ('open', 'filled', 'cancelled', 'pending')),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     type          TEXT        NOT NULL CHECK (type IN ('limit', 'market'))
+    filled_quantity NUMERIC(28,8) NOT NULL DEFAULT 0 CHECK (filled_quantity >= 0),
+    UNIQUE (user_id, market_id, created_at)
 );
 CREATE TABLE trades (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),

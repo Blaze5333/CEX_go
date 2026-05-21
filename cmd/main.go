@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 
@@ -14,6 +15,8 @@ import (
 const mainTag = "[main]"
 
 func main() {
+	ctx := context.Background()
+	defer ctx.Done()
 	log.Printf("%s starting CEX application", mainTag)
 
 	if err := godotenv.Load(); err != nil {
@@ -30,10 +33,10 @@ func main() {
 	log.Printf("%s postgres connected successfully", mainTag)
 	defer database.Close()
 	log.Printf("%s connecting to redis", mainTag)
-	redisConfig:=db.RedisConfig{
-		Addr: os.Getenv("REDIS_ADDR"),
+	redisConfig := db.RedisConfig{
+		Addr:     os.Getenv("REDIS_ADDR"),
 		Password: os.Getenv("REDIS_PASSWORD"),
-		DB: 0,
+		DB:       0,
 	}
 	redisClient, err := redisConfig.NewRedisClient()
 	if err != nil {
@@ -43,6 +46,13 @@ func main() {
 	defer redisClient.Close()
 
 	q := queries.New(database)
+	log.Printf("%s loading order book to redis", mainTag)
+
+	if err := redisConfig.LoadOrderBookToRedis(ctx, q); err != nil {
+		log.Printf("%s failed to load order book to redis: %v", mainTag, err)
+	} else {
+		log.Printf("%s order book loaded to redis successfully", mainTag)
+	}
 
 	r := gin.Default()
 	log.Printf("%s registering routes", mainTag)
