@@ -8,8 +8,10 @@ import (
 	"github.com/Blaze5333/cex/db/queries"
 	"github.com/Blaze5333/cex/internal/db"
 	"github.com/Blaze5333/cex/internal/routes"
+	"github.com/Blaze5333/cex/internal/ws"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
+	"golang.org/x/net/websocket"
 )
 
 const mainTag = "[main]"
@@ -59,7 +61,18 @@ func main() {
 	routes.UserRoutes(r, q)
 	routes.MarketRoutes(r, q)
 	routes.BalanceRoutes(r, q)
-
+	routes.OrderRoutes(r, q, &redisConfig)
+	wsServer := ws.WSServer{
+		Rdb:   redisClient,
+		Rooms: make(map[string]*ws.Room),
+	}
+	//websocket server
+	r.GET("/ws/:marketId", func(c *gin.Context) {
+		marketId := c.Param("marketId")
+		websocket.Handler(func(conn *websocket.Conn) {
+			wsServer.HandleConnection(conn, marketId)
+		}).ServeHTTP(c.Writer, c.Request)
+	})
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

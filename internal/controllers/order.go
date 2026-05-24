@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/Blaze5333/cex/db/queries"
+	"github.com/Blaze5333/cex/internal/db"
 	"github.com/Blaze5333/cex/internal/models"
 	"github.com/gin-gonic/gin"
 )
@@ -20,7 +21,7 @@ const orderCtrlTag = "[controllers/order]"
 // 7. UnlockAndTransferBalance query
 // 8. Controller + route
 
-func CreateOrder(q *queries.Queries) gin.HandlerFunc {
+func CreateOrder(q *queries.Queries, redisClient *db.RedisConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log.Printf("%s CreateOrder: handling create order request", orderCtrlTag)
 		var req models.CreateOrderRequest
@@ -85,5 +86,20 @@ func CreateOrder(q *queries.Queries) gin.HandlerFunc {
 		}
 		log.Printf("%s CreateOrder: successfully created order id=%s for userID=%s", orderCtrlTag, orderId, userId.(string))
 		c.JSON(http.StatusCreated, gin.H{"id": orderId})
+	}
+}
+
+func GetOrderBook(q *queries.Queries, redisClient *db.RedisConfig) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		marketId := c.Param("market_id")
+		log.Printf("%s GetOrderBook: fetching order book for market id=%s", orderCtrlTag, marketId)
+		orderBook, err := redisClient.GetOrderBookFromRedisByMarketId(marketId)
+		if err != nil {
+			log.Printf("%s GetOrderBook: failed to fetch order book for market id=%s: %v", orderCtrlTag, marketId, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to fetch order book"})
+			return
+		}
+		log.Printf("%s GetOrderBook: successfully fetched order book for market id=%s", orderCtrlTag, marketId)
+		c.JSON(http.StatusOK, gin.H{"order_book": orderBook})
 	}
 }
