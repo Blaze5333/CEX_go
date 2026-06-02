@@ -14,11 +14,9 @@ CREATE TABLE assets(
     icon_url      TEXT        NULL
 );
 
-//in market quote_asset will always be USD for simplicity, we can add more quote assets later if needed
-//id will be like BTC/USD, ETH/USD etc
 CREATE TABLE markets(
     id           TEXT        PRIMARY KEY DEFAULT gen_random_uuid(),
-    name         TEXT        NOT NULL,//this will be like BTC/USD, ETH/USD etc
+    name         TEXT        NOT NULL,
     base_asset   TEXT        NOT NULL REFERENCES assets(symbol) ON DELETE CASCADE,
     quote_asset  TEXT        NOT NULL REFERENCES assets(symbol) ON DELETE CASCADE,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),

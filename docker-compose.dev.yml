@@ -1,0 +1,11 @@
+services:
+  app:
+    build:
+      context: .
+      target: dev
+    volumes:
+      - .:/app
+      - go_mod_cache:/go/pkg/mod
+
+volumes:
+  go_mod_cache:

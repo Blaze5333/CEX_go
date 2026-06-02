@@ -6,12 +6,12 @@ import (
 	"log"
 	"sync"
 
-	"github.com/redis/go-redis/v9"
+	"github.com/Blaze5333/cex/internal/db"
 	"golang.org/x/net/websocket"
 )
 
 type WSServer struct {
-	Rdb   *redis.Client
+	Rdb   *db.RedisConfig
 	Rooms map[string]*Room // marketId → room
 	Mu    sync.RWMutex
 }
@@ -24,7 +24,7 @@ type Room struct {
 
 // Runs only while at least one user is in the room
 func (ws *WSServer) listenRedis(ctx context.Context, room *Room) {
-	pubsub := ws.Rdb.Subscribe(ctx,
+	pubsub := ws.Rdb.RdbClient.Subscribe(ctx,
 		fmt.Sprintf("orderbook:%s", room.marketId),
 		fmt.Sprintf("trades:%s", room.marketId),
 	)

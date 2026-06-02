@@ -85,6 +85,8 @@ func CreateOrder(q *queries.Queries, redisClient *db.RedisConfig) gin.HandlerFun
 			return
 		}
 		log.Printf("%s CreateOrder: successfully created order id=%s for userID=%s", orderCtrlTag, orderId, userId.(string))
+		//call the matching engine to attempt to match this order
+
 		c.JSON(http.StatusCreated, gin.H{"id": orderId})
 	}
 }

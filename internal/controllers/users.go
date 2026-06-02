@@ -64,7 +64,13 @@ func LoginUser(q *queries.Queries) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password", "message": "Incorrect password"})
 			return
 		}
+		authToken, err := auth.GenerateJWT(id, user.Email)
+		if err != nil {
+			log.Printf("%s LoginUser: failed to generate auth token for userID=%s email=%s: %v", usersCtrlTag, id, user.Email, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to generate auth token"})
+			return
+		}
 		log.Printf("%s LoginUser: successful login for userID=%s email=%s", usersCtrlTag, id, user.Email)
-		c.JSON(http.StatusOK, gin.H{"id": id, "email": user.Email})
+		c.JSON(http.StatusOK, gin.H{"id": id, "email": user.Email, "token": authToken})
 	}
 }

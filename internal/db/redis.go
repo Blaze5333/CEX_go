@@ -12,12 +12,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var rdb *redis.Client
-
 type RedisConfig struct {
-	Addr     string
-	Password string
-	DB       int
+	Addr      string
+	Password  string
+	DB        int
+	RdbClient *redis.Client
 }
 type MarketDepth struct {
 	MarketId string         `json:"market_id"`
@@ -25,32 +24,32 @@ type MarketDepth struct {
 	Sells    []models.Order `json:"sells"` // sorted lowest → highest
 }
 
-func (c *RedisConfig) NewRedisClient() (*redis.Client, error) {
-	rdb = redis.NewClient(&redis.Options{
+func (c *RedisConfig) NewRedisClient() (*RedisConfig, error) {
+	c.RdbClient = redis.NewClient(&redis.Options{
 		Addr:     c.Addr,
 		Password: c.Password,
 		DB:       c.DB,
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	pingResponse, err := rdb.Ping(ctx).Result()
+	pingResponse, err := c.RdbClient.Ping(ctx).Result()
 	println("Ping response from redis:", pingResponse)
-	return rdb, err
+	return c, err
 }
 
-func GetRedisClient() *redis.Client {
-	return rdb
+func (c *RedisConfig) GetRedisClient() *redis.Client {
+	return c.RdbClient
 }
 func (c *RedisConfig) Close() error {
-	return rdb.Close()
+	return c.RdbClient.Close()
 }
 func (c *RedisConfig) FlushDB() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	return rdb.FlushDB(ctx).Err()
+	return c.RdbClient.FlushDB(ctx).Err()
 }
 func (c *RedisConfig) LoadOrderBookToRedis(ctx context.Context, query *queries.Queries) error {
-	pipeline := rdb.Pipeline()
+	pipeline := c.RdbClient.Pipeline()
 	order, err := query.GetAllActiveOrders()
 	if err != nil {
 		log.Printf("Failed to load order book to redis: %v", err)
@@ -142,12 +141,12 @@ func (c *RedisConfig) GetOrderBookFromRedisByMarketId(marketId string) (*MarketD
 
 	go func() {
 		defer wg.Done()
-		buys, buyError = FetchOrderWithSideFromRedis(ctx, rdb, buyKey, "Buy")
+		buys, buyError = FetchOrderWithSideFromRedis(ctx, c.RdbClient, buyKey, "Buy")
 	}()
 
 	go func() {
 		defer wg.Done()
-		sells, sellError = FetchOrderWithSideFromRedis(ctx, rdb, sellKey, "Sell")
+		sells, sellError = FetchOrderWithSideFromRedis(ctx, c.RdbClient, sellKey, "Sell")
 	}()
 
 	wg.Wait()
@@ -171,4 +170,64 @@ func (c *RedisConfig) GetOrderBookFromRedisByMarketId(marketId string) (*MarketD
 		Buys:     buys,
 		Sells:    sells,
 	}, nil
+}
+func (C *RedisConfig) BestAskFromRedis(ctx context.Context, marketId string) (*models.Order, error) {
+	sellKey := fmt.Sprintf("orderbook:%s:Sell", marketId)
+	entries, err := C.RdbClient.ZRangeWithScores(ctx, sellKey, 0, 0).Result()
+	if err != nil {
+		log.Printf("Failed to fetch best ask from redis for market %s: %v", marketId, err)
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no sell orders in order book for market %s", marketId)
+	}
+	detailsKey := fmt.Sprintf("order:%s", entries[0].Member.(string))
+	details, err := C.RdbClient.HGetAll(ctx, detailsKey).Result()
+	if err != nil {
+		log.Printf("Failed to get best ask order details from redis for market %s: %v", marketId, err)
+		return nil, err
+	}
+	order := &models.Order{
+		ID:        entries[0].Member.(string),
+		UserID:    details["user_id"],
+		MarketID:  details["market_id"],
+		OrderType: details["order_type"],
+		Side:      details["side"],
+		Status:    details["status"],
+	}
+	fmt.Sscanf(details["price"], "%f", &order.Price)
+	fmt.Sscanf(details["quantity"], "%f", &order.Quantity)
+	fmt.Sscanf(details["filled_quantity"], "%f", &order.FilledQuantity)
+	fmt.Sscanf(details["created_at"], "%d", &order.CreatedAt)
+	return order, nil
+}
+func (C *RedisConfig) BestBidFromRedis(ctx context.Context, marketId string) (*models.Order, error) {
+	buyKey := fmt.Sprintf("orderbook:%s:Buy", marketId)
+	entries, err := C.RdbClient.ZRevRangeWithScores(ctx, buyKey, 0, 0).Result()
+	if err != nil {
+		log.Printf("Failed to fetch best bid from redis for market %s: %v", marketId, err)
+		return nil, err
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("no buy orders in order book for market %s", marketId)
+	}
+	detailsKey := fmt.Sprintf("order:%s", entries[0].Member.(string))
+	details, err := C.RdbClient.HGetAll(ctx, detailsKey).Result()
+	if err != nil {
+		log.Printf("Failed to get best bid order details from redis for market %s: %v", marketId, err)
+		return nil, err
+	}
+	order := &models.Order{
+		ID:        entries[0].Member.(string),
+		UserID:    details["user_id"],
+		MarketID:  details["market_id"],
+		OrderType: details["order_type"],
+		Side:      details["side"],
+		Status:    details["status"],
+	}
+	fmt.Sscanf(details["price"], "%f", &order.Price)
+	fmt.Sscanf(details["quantity"], "%f", &order.Quantity)
+	fmt.Sscanf(details["filled_quantity"], "%f", &order.FilledQuantity)
+	fmt.Sscanf(details["created_at"], "%d", &order.CreatedAt)
+	return order, nil
 }
