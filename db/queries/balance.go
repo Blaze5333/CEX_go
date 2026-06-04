@@ -163,6 +163,103 @@ func (q *Queries) CreditBalance(userID, asset string, amount float64) error {
 	log.Printf("%s CreditBalance: successfully credited %f of %s for userID=%s", balanceTag, amount, asset, userID)
 	return nil
 }
+func (q *Queries) CreditUSD(userID string, amount float64) error {
+	log.Printf("%s CreditUSD: userID=%s amount=%f", balanceTag, userID, amount)
+	//user table already has usd balance so we will just update that
+	_, err := q.db.Exec(`
+		UPDATE users
+		SET USD_balance = USD_balance + $1
+		WHERE id = $2
+	`, amount, userID)
+	if err != nil {
+		log.Printf("%s CreditUSD: failed for userID=%s amount=%f: %v", balanceTag, userID, amount, err)
+		return err
+	}
+	log.Printf("%s CreditUSD: successfully credited %f USD for userID=%s", balanceTag, amount, userID)
+	return nil
+}
+func (q *Queries) DebitUSD(userID string, amount float64) error {
+	log.Printf("%s DebitUSD: userID=%s amount=%f", balanceTag, userID, amount)
+	//here also we need to lock the row when updating
+	tx, err := q.db.Begin()
+	if err != nil {
+		log.Printf("%s DebitUSD: failed to begin transaction: %v", balanceTag, err)
+		return err
+	}
+	defer tx.Rollback()
+	var usdBalance float64
+	err = tx.QueryRow(`
+		SELECT locked_balance
+		FROM users
+		WHERE id = $1
+		FOR UPDATE
+	`, userID).Scan(&usdBalance)
+	if err != nil {
+		log.Printf("%s DebitUSD: failed to query USD balance for userID=%s: %v", balanceTag, userID, err)
+		return err
+	}
+	if usdBalance < amount {
+		log.Printf("%s DebitUSD: insufficient USD balance for userID=%s available=%f requested=%f", balanceTag, userID, usdBalance, amount)
+		return sql.ErrNoRows
+	}
+	_, err = tx.Exec(`
+		UPDATE users
+		SET locked_balance = locked_balance - $1
+		WHERE id = $2
+	`, amount, userID)
+	if err != nil {
+		log.Printf("%s DebitUSD: failed to update USD balance for userID=%s: %v", balanceTag, userID, err)
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		log.Printf("%s DebitUSD: failed to commit transaction for userID=%s: %v", balanceTag, userID, err)
+		return err
+	}
+	log.Printf("%s DebitUSD: successfully debited %f USD for userID=%s", balanceTag, amount, userID)
+	return nil
+}
+func (q *Queries) DebitBalance(userID, asset string, amount float64) error {
+	log.Printf("%s DebitBalance: userID=%s asset=%s amount=%f", balanceTag, userID, asset, amount)
+	tx, err := q.db.Begin()
+	if err != nil {
+		log.Printf("%s DebitBalance: failed to begin transaction: %v", balanceTag, err)
+		return err
+	}
+	defer tx.Rollback()
+	//balance will always be debited from locked balance so we will check locked balance instead of available balance
+	var locked float64
+	err = tx.QueryRow(`
+		SELECT locked
+		FROM balances
+		WHERE user_id = $1 AND asset = $2
+		FOR UPDATE
+	`, userID, asset).Scan(&locked)
+	if err != nil {
+		log.Printf("%s DebitBalance: failed to query locked balance for userID=%s asset=%s: %v", balanceTag, userID, asset, err)
+		return err
+	}
+	if locked < amount {
+		log.Printf("%s DebitBalance: insufficient locked balance for userID=%s asset=%s locked=%f requested=%f", balanceTag, userID, asset, locked, amount)
+		return sql.ErrNoRows
+	}
+
+	_, err = tx.Exec(`
+		UPDATE balances
+		SET locked = locked - $1
+		WHERE user_id = $2 AND asset = $3
+	`, amount, userID, asset)
+	if err != nil {
+		log.Printf("%s DebitBalance: failed to update balance for userID=%s asset=%s: %v", balanceTag, userID, asset, err)
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		log.Printf("%s DebitBalance: failed to commit transaction for userID=%s asset=%s: %v", balanceTag, userID, asset, err)
+		return err
+	}
+	log.Printf("%s DebitBalance: successfully debited %f of %s for userID=%s", balanceTag, amount, asset, userID)
+	return nil
+}
 
 func (q *Queries) GetBalances(userID string) ([]models.Balance, error) {
 	log.Printf("%s GetBalances: fetching balances for userID=%s", balanceTag, userID)

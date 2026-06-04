@@ -231,3 +231,42 @@ func (C *RedisConfig) BestBidFromRedis(ctx context.Context, marketId string) (*m
 	fmt.Sscanf(details["created_at"], "%d", &order.CreatedAt)
 	return order, nil
 }
+func (C *RedisConfig) UpdateOrderInRedis(ctx context.Context, order models.Order) error {
+	bookKey := fmt.Sprintf("orderbook:%s:%s", order.MarketID, order.Side)
+	detailsKey := fmt.Sprintf("order:%s", order.ID)
+	pipe := C.RdbClient.Pipeline()
+	//if order is full filled then we can remove it from the order book sorted set, otherwise we need to update the score if price or created_at has changed and also update the details hash with the new filled quantity and status
+	if order.Status == string(models.CANCELLED) || order.FilledQuantity >= order.Quantity {
+		pipe.ZRem(ctx, bookKey, order.ID)
+		//remove from details hash as well since we won't need it anymore
+		pipe.Del(ctx, detailsKey)
+		_, err := pipe.Exec(ctx)
+		if err != nil {
+			log.Printf("Failed to remove order from redis for order %s: %v", order.ID, err)
+		}
+		return err
+	}
+	pipe.HSet(ctx, detailsKey, map[string]interface{}{
+		"user_id":         order.UserID,
+		"market_id":       order.MarketID,
+		"order_type":      order.OrderType,
+		"side":            order.Side,
+		"price":           order.Price,
+		"quantity":        order.Quantity,
+		"status":          order.Status,
+		"created_at":      order.CreatedAt.UnixMilli(),
+		"filled_quantity": order.FilledQuantity,
+	})
+	//why are we updating the score even if price and created_at haven't changed? we can optimize this by only updating the score if price or created_at has changed, but for simplicity let's just update it every time for now
+	score := buildScore(order.Price, order.CreatedAt.UnixMilli())
+	pipe.ZAdd(ctx, bookKey, redis.Z{
+		Score:  score,
+		Member: order.ID,
+	})
+
+	_, err := pipe.Exec(ctx)
+	if err != nil {
+		log.Printf("Failed to update order in redis for order %s: %v", order.ID, err)
+	}
+	return err
+}

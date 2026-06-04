@@ -57,7 +57,9 @@ CREATE TABLE trades (
     sell_order_id UUID        NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     quantity      NUMERIC(28,8) NOT NULL CHECK (quantity > 0),
     price         NUMERIC(28,8) NOT NULL CHECK (price > 0),
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    quote_asset TEXT        NOT NULL REFERENCES assets(symbol) ON DELETE CASCADE,
+    base_asset TEXT        NOT NULL REFERENCES assets(symbol) ON DELETE CASCADE
 );
 CREATE TABLE transactions (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
