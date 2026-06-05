@@ -32,7 +32,6 @@ The project uses PostgreSQL as the source of truth and Redis for fast order book
   - [Environment Variables](#environment-variables)
   - [WebSocket Usage](#websocket-usage)
   - [Project Structure](#project-structure)
-  - [Current Status and Known Gaps](#current-status-and-known-gaps)
   - [Roadmap Ideas](#roadmap-ideas)
 
 ## What This Project Is
@@ -339,15 +338,6 @@ internal/
   ws/                    # websocket room + redis subscription logic
 ```
 
-## Current Status and Known Gaps
-
-This section is intentionally transparent so users know what is production-ready vs in-progress.
-
-- Password hashing is placeholder logic (plain comparison), not bcrypt/argon2 yet.
-- `POST /orders` route is missing auth middleware while controller expects authenticated context.
-- Order creation currently stores order and locks balance, but does not yet trigger matching engine execution in the request path.
-- Some SQL/migration and query naming conventions may still need cleanup and alignment.
-- `POST /markets` is annotated as admin-only in comments but admin authorization is not yet implemented.
 
 ## Roadmap Ideas
 
@@ -359,6 +349,3 @@ This section is intentionally transparent so users know what is production-ready
 - add tests (unit + integration)
 - add API documentation (OpenAPI/Swagger)
 
----
-
-If you want, I can also generate a second README variant specifically for contributors (dev-focused), plus a Postman collection for all current endpoints.
