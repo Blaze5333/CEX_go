@@ -350,6 +350,3 @@ This section is intentionally transparent so users know what is production-ready
 - add tests (unit + integration)
 - add API documentation (OpenAPI/Swagger)
 
----
-
-If you want, I can also generate a second README variant specifically for contributors (dev-focused), plus a Postman collection for all current endpoints.
