@@ -183,6 +183,18 @@ func (me *MathcingEngine) ApplyOrderResultToDB(ctx context.Context, result Order
 		return nil
 	})
 	wg.Wait()
+	//now we neeed to indert the incoming order in redis if it is not fully filled
+	if result.IncomingOrder.Status != string(models.FILLED) {
+		err = me.rdb.InserOrderToRedis(ctx, result.IncomingOrder)
+		if err != nil {
+			log.Printf("Failed to insert incoming order into Redis: %v", err)
+			return err
+		}
+	}
+	if err := errorGroup.Wait(); err != nil {
+		log.Printf("Error occurred while applying order result to DB: %v", err)
+		return err
+	}
 	return err
 }
 

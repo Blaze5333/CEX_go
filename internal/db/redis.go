@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"sync"
@@ -263,10 +264,69 @@ func (C *RedisConfig) UpdateOrderInRedis(ctx context.Context, order models.Order
 		Score:  score,
 		Member: order.ID,
 	})
-
-	_, err := pipe.Exec(ctx)
+	payload := map[string]interface{}{
+		"type":            "order_update",
+		"order_id":        order.ID,
+		"market_id":       order.MarketID,
+		"side":            order.Side,
+		"price":           order.Price,
+		"quantity":        order.Quantity,
+		"filled_quantity": order.FilledQuantity,
+		"status":          order.Status,
+	}
+    payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("Failed to marshal order update payload for order %s: %v", order.ID, err)
+	} else {	
+		C.RdbClient.Publish(ctx, fmt.Sprintf("orderbook:%s", order.MarketID), payloadBytes)
+	}
+	_, err = pipe.Exec(ctx)
 	if err != nil {
 		log.Printf("Failed to update order in redis for order %s: %v", order.ID, err)
+	}
+	return err
+}
+func (C *RedisConfig) InserOrderToRedis(ctx context.Context, order models.Order) error {
+	//after inserting i also need to publish this so other users can be notified of the new order and update their order book accordingly, but for simplicity let's just insert to redis first and then we can add the publish/subscribe logic later
+	bookKey := fmt.Sprintf("orderbook:%s:%s", order.MarketID, order.Side)
+	detailsKey := fmt.Sprintf("order:%s", order.ID)
+	pipe := C.RdbClient.Pipeline()
+	pipe.HSet(ctx, detailsKey, map[string]interface{}{
+		"user_id":         order.UserID,
+		"market_id":       order.MarketID,
+		"order_type":      order.OrderType,
+		"side":            order.Side,
+		"price":           order.Price,
+		"quantity":        order.Quantity,
+		"status":          order.Status,
+		"created_at":      order.CreatedAt.UnixMilli(),
+		"filled_quantity": order.FilledQuantity,
+	})
+	score := buildScore(order.Price, order.CreatedAt.UnixMilli())
+	pipe.ZAdd(ctx, bookKey, redis.Z{
+		Score:  score,
+		Member: order.ID,
+	})
+	payload := map[string]interface{}{
+		"type":            "new_order",
+		"order_id":        order.ID,
+		"market_id":       order.MarketID,
+		"side":            order.Side,	
+		"price":           order.Price,
+		"quantity":        order.Quantity,
+		"filled_quantity": order.FilledQuantity,
+		"status":          order.Status,
+	}
+	payloadBytes, err := json.Marshal(payload)	
+	if err != nil {
+		log.Printf("Failed to marshal new order payload for order %s: %v", order.ID, err)
+	} else {
+		C.RdbClient.Publish(ctx, fmt.Sprintf("orderbook:%s", order.MarketID), payloadBytes)
+	}
+
+	_, err = pipe.Exec(ctx)
+	if err != nil {
+		log.Printf("Failed to insert order to redis for order %s: %v", order.ID, err)
 	}
 	return err
 }
