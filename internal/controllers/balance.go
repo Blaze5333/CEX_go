@@ -65,3 +65,37 @@ func GetBalances(q *queries.Queries) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{"balances": balances})
 	}
 }
+
+func CreateAsset(q *queries.Queries) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		log.Printf("%s CreateAsset: handling create asset request", balanceCtrlTag)
+		var req models.CreateAssetRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			log.Printf("%s CreateAsset: invalid request body: %v", balanceCtrlTag, err)
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "message": "Invalid request"})
+			return
+		}
+		log.Printf("%s CreateAsset: creating asset with symbol=%s name=%s", balanceCtrlTag, req.Symbol, req.Name)
+		if err := q.CreateAsset(req); err != nil {
+			log.Printf("%s CreateAsset: failed to create asset with symbol=%s: %v", balanceCtrlTag, req.Symbol, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to create asset"})
+			return
+		}
+		log.Printf("%s CreateAsset: successfully created asset with symbol=%s", balanceCtrlTag, req.Symbol)
+		c.JSON(http.StatusCreated, gin.H{"message": "Asset created successfully", "symbol": req.Symbol})
+	}
+}
+func InactivateAsset(q *queries.Queries) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		log.Printf("%s InactivateAsset: handling inactivate asset request", balanceCtrlTag)
+		symbol := c.Param("symbol")
+		log.Printf("%s InactivateAsset: inactivating asset with symbol=%s", balanceCtrlTag, symbol)
+		if err := q.InactivateAsset(symbol); err != nil {
+			log.Printf("%s InactivateAsset: failed to inactivate asset with symbol=%s: %v", balanceCtrlTag, symbol, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to inactivate asset"})
+			return
+		}
+		log.Printf("%s InactivateAsset: successfully inactivated asset with symbol=%s", balanceCtrlTag, symbol)
+		c.JSON(http.StatusOK, gin.H{"message": "Asset inactivated successfully", "symbol": symbol})
+	}
+}

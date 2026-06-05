@@ -7,6 +7,7 @@ import (
 
 	"github.com/Blaze5333/cex/db/queries"
 	"github.com/Blaze5333/cex/internal/db"
+	"github.com/Blaze5333/cex/internal/matching"
 	"github.com/Blaze5333/cex/internal/routes"
 	"github.com/Blaze5333/cex/internal/ws"
 	"github.com/gin-gonic/gin"
@@ -55,13 +56,17 @@ func main() {
 	} else {
 		log.Printf("%s order book loaded to redis successfully", mainTag)
 	}
+	matchingConfig := matching.MatchingEngine{
+		Rdb: &redisConfig,
+		DB:  *q,
+	}
 
 	r := gin.Default()
 	log.Printf("%s registering routes", mainTag)
 	routes.UserRoutes(r, q)
 	routes.MarketRoutes(r, q)
 	routes.BalanceRoutes(r, q)
-	routes.OrderRoutes(r, q, &redisConfig)
+	routes.OrderRoutes(r, q, &redisConfig, &matchingConfig)
 	wsServer := ws.WSServer{
 		Rdb:   redisClient,
 		Rooms: make(map[string]*ws.Room),

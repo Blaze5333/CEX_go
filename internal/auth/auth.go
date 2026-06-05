@@ -62,6 +62,7 @@ func ValidateJWT(tokenString string) (*Claims, error) {
 	}
 	if claims, ok := token.Claims.(*Claims); ok && token.Valid {
 		log.Printf("%s ValidateJWT: token valid for userID=%s", authTag, claims.UserID)
+
 		return claims, nil
 	}
 	log.Printf("%s ValidateJWT: token is invalid", authTag)

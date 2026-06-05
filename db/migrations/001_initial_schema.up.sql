@@ -4,7 +4,8 @@ CREATE TABLE users (
     password_hash TEXT        NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     USD_balance    NUMERIC(28,8) NOT NULL DEFAULT 0 CHECK (USD_balance >= 0),
-    locked_balance NUMERIC(28,8) NOT NULL DEFAULT 0 CHECK (locked_balance >= 0)
+    locked_balance NUMERIC(28,8) NOT NULL DEFAULT 0 CHECK (locked_balance >= 0),
+    role          TEXT        NOT NULL CHECK (role IN ('user', 'admin')) DEFAULT 'user'
 );
 CREATE TABLE assets(
     symbol        TEXT        PRIMARY KEY,

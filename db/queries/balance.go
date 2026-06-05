@@ -301,4 +301,57 @@ func (q *Queries) InitializeBalance(userID string) error {
 	return nil
 }
 
-//when user buys BTC or deposits usd so we need smart contract to update the balance of the user.\
+// when user buys BTC or deposits usd so we need smart contract to update the balance of the user.\
+func (q *Queries) CreateAsset(asset models.CreateAssetRequest) error {
+	log.Printf("%s CreateAsset: creating asset with symbol=%s name=%s", balanceTag, asset.Symbol, asset.Name)
+	_, err := q.db.Exec(`
+		INSERT INTO assets (symbol, name, icon_url,is_active)
+		VALUES ($1, $2, $3, TRUE)
+	`, asset.Symbol, asset.Name, asset.IconURL)
+	if err != nil {
+		log.Printf("%s CreateAsset: failed to create asset with symbol=%s: %v", balanceTag, asset.Symbol, err)
+		return err
+	}
+	log.Printf("%s CreateAsset: successfully created asset with symbol=%s", balanceTag, asset.Symbol)
+	return nil
+}
+func (q *Queries) InactivateAsset(symbol string) error {
+	log.Printf("%s InactivateAsset: inactivating asset with symbol=%s", balanceTag, symbol)
+	_, err := q.db.Exec(`
+		UPDATE assets
+		SET is_active = FALSE
+		WHERE symbol = $1
+	`, symbol)
+	if err != nil {
+		log.Printf("%s InactivateAsset: failed to inactivate asset with symbol=%s: %v", balanceTag, symbol, err)
+		return err
+	}
+	log.Printf("%s InactivateAsset: successfully inactivated asset with symbol=%s", balanceTag, symbol)
+	return nil
+}
+func (q *Queries) GetActiveAssets() ([]string, error) {
+	log.Printf("%s GetActiveAssets: fetching active assets", balanceTag)
+	rows, err := q.db.Query(`
+		SELECT symbol
+		FROM assets
+		WHERE is_active = TRUE
+	`)
+	if err != nil {
+		log.Printf("%s GetActiveAssets: query failed: %v", balanceTag, err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var assets []string
+	for rows.Next() {
+		var symbol string
+		if err := rows.Scan(&symbol); err != nil {
+			log.Printf("%s GetActiveAssets: failed to scan row: %v", balanceTag, err)
+			return nil, err
+		}
+		assets = append(assets, symbol)
+	}
+	log.Printf("%s GetActiveAssets: returned %d active asset(s)", balanceTag, len(assets))
+	return assets, nil
+
+}

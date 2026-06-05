@@ -18,12 +18,12 @@ type OrderResult struct {
 	UpdatedOrders []models.Order
 	Trades        []models.Trade
 }
-type MathcingEngine struct {
-	rdb *db.RedisConfig
-	db  queries.Queries
+type MatchingEngine struct {
+	Rdb *db.RedisConfig
+	DB  queries.Queries
 }
 
-func (me *MathcingEngine) MatchOrders(order models.Order) OrderResult {
+func (me *MatchingEngine) MatchOrders(order models.Order) OrderResult {
 	result := OrderResult{IncomingOrder: order}
 	//matching logic here, update result.UpdatedOrders and result.Trades as needed
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -33,7 +33,7 @@ func (me *MathcingEngine) MatchOrders(order models.Order) OrderResult {
 		var err error
 		if order.Side == string(models.BUY) {
 			//match with best sell orders
-			bestLevel, err = me.rdb.BestAskFromRedis(ctx, order.MarketID)
+			bestLevel, err = me.Rdb.BestAskFromRedis(ctx, order.MarketID)
 			if err != nil {
 				break
 			}
@@ -42,7 +42,7 @@ func (me *MathcingEngine) MatchOrders(order models.Order) OrderResult {
 			}
 		} else {
 			//match with best buy orders
-			bestLevel, err = me.rdb.BestBidFromRedis(ctx, order.MarketID)
+			bestLevel, err = me.Rdb.BestBidFromRedis(ctx, order.MarketID)
 			if err != nil {
 				break
 			}
@@ -56,7 +56,7 @@ func (me *MathcingEngine) MatchOrders(order models.Order) OrderResult {
 		order = incoming
 		result.IncomingOrder = incoming
 		//also need to update the order book in Redis and do the final call to DB to persist the trade and updated orders after the loop ends
-		err = me.rdb.UpdateOrderInRedis(ctx, againstOrder)
+		err = me.Rdb.UpdateOrderInRedis(ctx, againstOrder)
 		if err != nil {
 			break
 		}
@@ -72,7 +72,7 @@ func (me *MathcingEngine) MatchOrders(order models.Order) OrderResult {
 	return result
 }
 
-func (me *MathcingEngine) ApplyOrderResultToDB(ctx context.Context, result OrderResult) error {
+func (me *MatchingEngine) ApplyOrderResultToDB(ctx context.Context, result OrderResult) error {
 	//so the operations here are
 	//1. insert all trades in result.Trades
 	//2. update all orders in result.UpdatedOrders
@@ -89,7 +89,7 @@ func (me *MathcingEngine) ApplyOrderResultToDB(ctx context.Context, result Order
 		defer close(tradesDone)
 		defer wg.Done()
 		for index, trade := range result.Trades {
-			tradefromDb, err := me.db.InsertTrade(trade)
+			tradefromDb, err := me.DB.InsertTrade(trade)
 			if err != nil {
 				log.Printf("Index : %v Failed to insert trade into DB: %v", index, err)
 				return err
@@ -102,7 +102,7 @@ func (me *MathcingEngine) ApplyOrderResultToDB(ctx context.Context, result Order
 	errorGroup.Go(func() error {
 		defer wg.Done()
 		for _, order := range result.UpdatedOrders {
-			err = me.db.UpdateOrderStatusAndQuantity(order.ID, order.Status, order.FilledQuantity)
+			err = me.DB.UpdateOrderStatusAndQuantity(order.ID, order.Status, order.FilledQuantity)
 			if err != nil {
 				log.Printf("Index : %v Failed to update order in DB: %v", order.ID, err)
 				return err
@@ -112,7 +112,7 @@ func (me *MathcingEngine) ApplyOrderResultToDB(ctx context.Context, result Order
 	})
 	errorGroup.Go(func() error {
 		defer wg.Done()
-		err = me.db.UpdateOrderStatusAndQuantity(result.IncomingOrder.ID, result.IncomingOrder.Status, result.IncomingOrder.FilledQuantity)
+		err = me.DB.UpdateOrderStatusAndQuantity(result.IncomingOrder.ID, result.IncomingOrder.Status, result.IncomingOrder.FilledQuantity)
 		if err != nil {
 			log.Printf("Index : %v Failed to update incoming order in DB: %v", result.IncomingOrder.ID, err)
 			return err
@@ -130,10 +130,10 @@ func (me *MathcingEngine) ApplyOrderResultToDB(ctx context.Context, result Order
 			innerGroup.Go(func() error {
 				if result.IncomingOrder.Side == string(models.BUY) {
 
-					if err := me.db.DebitBalance(trade.SellOrder.UserID, trade.QuoteAsset, trade.Quantity); err != nil {
+					if err := me.DB.DebitBalance(trade.SellOrder.UserID, trade.QuoteAsset, trade.Quantity); err != nil {
 						return err
 					}
-					if err := me.db.CreditUSD(trade.SellOrder.UserID, trade.Price*trade.Quantity); err != nil {
+					if err := me.DB.CreditUSD(trade.SellOrder.UserID, trade.Price*trade.Quantity); err != nil {
 						return err
 					}
 					mu.Lock()
@@ -142,10 +142,10 @@ func (me *MathcingEngine) ApplyOrderResultToDB(ctx context.Context, result Order
 					mu.Unlock()
 
 				} else {
-					if err := me.db.CreditBalance(trade.BuyOrder.UserID, trade.QuoteAsset, trade.Quantity); err != nil {
+					if err := me.DB.CreditBalance(trade.BuyOrder.UserID, trade.QuoteAsset, trade.Quantity); err != nil {
 						return err
 					}
-					if err := me.db.DebitUSD(trade.BuyOrder.UserID, trade.Price*trade.Quantity); err != nil {
+					if err := me.DB.DebitUSD(trade.BuyOrder.UserID, trade.Price*trade.Quantity); err != nil {
 						return err
 					}
 					mu.Lock()
@@ -162,20 +162,20 @@ func (me *MathcingEngine) ApplyOrderResultToDB(ctx context.Context, result Order
 			return err
 		}
 		if result.IncomingOrder.Side == string(models.BUY) {
-			if err := me.db.CreditBalance(result.IncomingOrder.UserID, result.IncomingOrder.MarketID, balanceToCredit); err != nil {
+			if err := me.DB.CreditBalance(result.IncomingOrder.UserID, result.IncomingOrder.MarketID, balanceToCredit); err != nil {
 				log.Printf("Failed to credit balance for user %s: %v", result.IncomingOrder.UserID, err)
 				return err
 			}
-			if err := me.db.DebitUSD(result.IncomingOrder.UserID, balanceToDebit); err != nil {
+			if err := me.DB.DebitUSD(result.IncomingOrder.UserID, balanceToDebit); err != nil {
 				log.Printf("Failed to debit USD for user %s: %v", result.IncomingOrder.UserID, err)
 				return err
 			}
 		} else {
-			if err := me.db.CreditUSD(result.IncomingOrder.UserID, balanceToCredit); err != nil {
+			if err := me.DB.CreditUSD(result.IncomingOrder.UserID, balanceToCredit); err != nil {
 				log.Printf("Failed to credit USD for user %s: %v", result.IncomingOrder.UserID, err)
 				return err
 			}
-			if err := me.db.DebitBalance(result.IncomingOrder.UserID, result.IncomingOrder.MarketID, balanceToDebit); err != nil {
+			if err := me.DB.DebitBalance(result.IncomingOrder.UserID, result.IncomingOrder.MarketID, balanceToDebit); err != nil {
 				log.Printf("Failed to debit balance for user %s: %v", result.IncomingOrder.UserID, err)
 				return err
 			}
@@ -185,7 +185,7 @@ func (me *MathcingEngine) ApplyOrderResultToDB(ctx context.Context, result Order
 	wg.Wait()
 	//now we neeed to indert the incoming order in redis if it is not fully filled
 	if result.IncomingOrder.Status != string(models.FILLED) {
-		err = me.rdb.InserOrderToRedis(ctx, result.IncomingOrder)
+		err = me.Rdb.InserOrderToRedis(ctx, result.IncomingOrder)
 		if err != nil {
 			log.Printf("Failed to insert incoming order into Redis: %v", err)
 			return err

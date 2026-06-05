@@ -31,16 +31,55 @@ func VerifyUser(q *queries.Queries) gin.HandlerFunc {
 			return
 		}
 
-		email, err := q.GetUserByID(claims.UserID)
+		user, err := q.GetUserByID(claims.UserID)
 		if err != nil {
 			log.Printf("%s VerifyUser: user not found for userID=%s: %v", middlewareTag, claims.UserID, err)
 			c.JSON(401, gin.H{"error": "User not found", "message": "Invalid token"})
 			c.Abort()
 			return
 		}
-		log.Printf("%s VerifyUser: authenticated userID=%s email=%s", middlewareTag, claims.UserID, email)
+		log.Printf("%s VerifyUser: authenticated userID=%s email=%s", middlewareTag, claims.UserID, user.Email)
 		c.Set("user_id", claims.UserID)
-		c.Set("email", email)
+		c.Set("email", user.Email)
+		c.Next()
+	}
+}
+func VerifyAdmin(q *queries.Queries) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		log.Printf("%s VerifyAdmin: verifying request to %s", middlewareTag, c.Request.URL.Path)
+
+		tokenString := c.GetHeader("Authorization")
+		if tokenString == "" {
+			log.Printf("%s VerifyAdmin: authorization header missing for %s", middlewareTag, c.Request.URL.Path)
+			c.JSON(401, gin.H{"error": "Authorization header is missing", "message": "Please provide a valid token"})
+			c.Abort()
+			return
+		}
+		token := strings.Split(tokenString, " ")[1]
+		claims, err := auth.ValidateJWT(token)
+		if err != nil {
+			log.Printf("%s VerifyAdmin: invalid token for %s: %v", middlewareTag, c.Request.URL.Path, err)
+			c.JSON(401, gin.H{"error": err.Error(), "message": "Invalid token"})
+			c.Abort()
+			return
+		}
+
+		user, err := q.GetUserByID(claims.UserID)
+		if err != nil {
+			log.Printf("%s VerifyAdmin: user not found for userID=%s: %v", middlewareTag, claims.UserID, err)
+			c.JSON(401, gin.H{"error": "User not found", "message": "Invalid token"})
+			c.Abort()
+			return
+		}
+		log.Printf("%s VerifyAdmin: authenticated userID=%s email=%s", middlewareTag, claims.UserID, user.Email)
+		c.Set("user_id", claims.UserID)
+		c.Set("email", user.Email)
+		if user.Role != "admin" {
+			log.Printf("%s VerifyAdmin: userID=%s does not have admin role", middlewareTag, claims.UserID)
+			c.JSON(403, gin.H{"error": "Forbidden", "message": "You do not have permission to access this resource"})
+			c.Abort()
+			return
+		}
 		c.Next()
 	}
 }

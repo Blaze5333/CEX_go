@@ -6,6 +6,7 @@ import (
 
 	"github.com/Blaze5333/cex/db/queries"
 	"github.com/Blaze5333/cex/internal/db"
+	"github.com/Blaze5333/cex/internal/matching"
 	"github.com/Blaze5333/cex/internal/models"
 	"github.com/gin-gonic/gin"
 )
@@ -21,7 +22,7 @@ const orderCtrlTag = "[controllers/order]"
 // 7. UnlockAndTransferBalance query
 // 8. Controller + route
 
-func CreateOrder(q *queries.Queries, redisClient *db.RedisConfig) gin.HandlerFunc {
+func CreateOrder(q *queries.Queries, redisClient *db.RedisConfig, matchingConfig *matching.MatchingEngine) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		log.Printf("%s CreateOrder: handling create order request", orderCtrlTag)
 		var req models.CreateOrderRequest
@@ -78,16 +79,22 @@ func CreateOrder(q *queries.Queries, redisClient *db.RedisConfig) gin.HandlerFun
 			return
 		}
 		log.Printf("%s CreateOrder: creating order for userID=%s marketID=%s type=%s side=%s price=%f quantity=%f", orderCtrlTag, userId.(string), req.MarketID, req.OrderType, req.Side, req.Price, req.Quantity)
-		orderId, err := q.CreateOrder(userId.(string), req.MarketID, req.OrderType, req.Side, req.Price, req.Quantity)
+		order, err := q.CreateOrder(userId.(string), req.MarketID, req.OrderType, req.Side, req.Price, req.Quantity)
 		if err != nil {
 			log.Printf("%s CreateOrder: failed to create order for userID=%s marketID=%s: %v", orderCtrlTag, userId.(string), req.MarketID, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to create order"})
 			return
 		}
-		log.Printf("%s CreateOrder: successfully created order id=%s for userID=%s", orderCtrlTag, orderId, userId.(string))
-		//call the matching engine to attempt to match this order
-
-		c.JSON(http.StatusCreated, gin.H{"id": orderId})
+		log.Printf("%s CreateOrder: successfully created order id=%s for userID=%s", orderCtrlTag, order.ID, userId.(string))
+		   
+          matchResult:=matchingConfig.MatchOrders(*order)
+		if err := matchingConfig.ApplyOrderResultToDB(c.Request.Context(), matchResult); err != nil {
+			log.Printf("%s CreateOrder: failed to apply order result to DB for order id=%s: %v", orderCtrlTag, order.ID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to process order"})
+			return
+		}
+		log.Printf("%s CreateOrder: successfully processed order id=%s", orderCtrlTag, order.ID)
+		c.JSON(http.StatusCreated, gin.H{"id": order.ID})
 	}
 }
 

@@ -2,6 +2,7 @@ package queries
 
 import (
 	"database/sql"
+	"github.com/Blaze5333/cex/internal/models"
 	"log"
 )
 
@@ -47,18 +48,22 @@ func (q *Queries) GetUserByEmail(email string) (string, string, error) {
 	return id, passwordHash, nil
 }
 
-func (q *Queries) GetUserByID(userID string) (string, error) {
+func (q *Queries) GetUserByID(userID string) (*models.User, error) {
 	log.Printf("%s GetUserByID: looking up user with userID=%s", userTag, userID)
-	var email string
+	var email, role string
 	err := q.db.QueryRow(`
-		SELECT email 
+		SELECT email, role
 		FROM users 
 		WHERE id = $1
-	`, userID).Scan(&email)
+	`, userID).Scan(&email, &role)
 	if err != nil {
 		log.Printf("%s GetUserByID: user not found for userID=%s: %v", userTag, userID, err)
-		return "", err
+		return nil, err
 	}
 	log.Printf("%s GetUserByID: found email=%s for userID=%s", userTag, email, userID)
-	return email, nil
+	return &models.User{
+		ID:    userID,
+		Email: email,
+		Role:  role,
+	}, nil
 }
