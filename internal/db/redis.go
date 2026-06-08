@@ -237,7 +237,7 @@ func (C *RedisConfig) UpdateOrderInRedis(ctx context.Context, order models.Order
 	detailsKey := fmt.Sprintf("order:%s", order.ID)
 	pipe := C.RdbClient.Pipeline()
 	//if order is full filled then we can remove it from the order book sorted set, otherwise we need to update the score if price or created_at has changed and also update the details hash with the new filled quantity and status
-	if order.Status == string(models.CANCELLED) || order.FilledQuantity >= order.Quantity {
+	if order.Status == string(models.CANCELLED) || order.FilledQuantity >= order.Quantity || order.Status == string(models.FILLED) || order.Status == string(models.CLOSED) {
 		pipe.ZRem(ctx, bookKey, order.ID)
 		//remove from details hash as well since we won't need it anymore
 		pipe.Del(ctx, detailsKey)

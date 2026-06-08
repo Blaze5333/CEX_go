@@ -177,6 +177,39 @@ func (q *Queries) UpdateOrderStatus(id, status string) error {
 	log.Printf("%s UpdateOrderStatus: successfully updated orderID=%s to status=%s", orderTag, id, status)
 	return nil
 }
+func (q *Queries) UpdateOrderStatusTx(tx *sql.Tx, id, status string) (*models.Order, error) {
+	var order models.Order
+	log.Printf("%s UpdateOrderStatusTx: orderID=%s status=%s", orderTag, id, status)
+
+	err := tx.QueryRow(`
+		UPDATE orders
+		SET status = $1
+		FROM markets
+		WHERE orders.id = $2 AND orders.market_id = markets.id
+		RETURNING orders.id, orders.user_id, orders.market_id, orders.order_type, orders.side, orders.price, orders.quantity, orders.status, orders.created_at, orders.filled_quantity,markets.base_asset, markets.quote_asset
+
+	`, status, id).Scan(
+		&order.ID,
+		&order.UserID,
+		&order.MarketID,
+		&order.OrderType,
+		&order.Side,
+		&order.Price,
+		&order.Quantity,
+		&order.Status,
+		&order.CreatedAt,
+		&order.FilledQuantity,
+		&order.BaseAsset,
+		&order.QuoteAsset,
+	)
+	if err != nil {
+		log.Printf("%s UpdateOrderStatusTx: failed to update and return order for orderID=%s status=%s: %v", orderTag, id, status, err)
+		return nil, err
+	}
+	log.Printf("%s UpdateOrderStatusTx: successfully updated orderID=%s to status=%s", orderTag, id, status)
+	return &order, nil
+
+}
 
 func (q *Queries) DeleteOrder(id string) error {
 	log.Printf("%s DeleteOrder: orderID=%s", orderTag, id)

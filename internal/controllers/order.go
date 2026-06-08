@@ -187,3 +187,81 @@ func GetActiveUserOrders(q *queries.Queries) gin.HandlerFunc {
 		c.JSON(http.StatusOK, gin.H{"orders": orders})
 	}
 }
+
+func CancelOrder(q *queries.Queries, redisClient *db.RedisConfig) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		orderId := c.Param("id")
+		txn, err := q.GetDB().BeginTx(c.Request.Context(), nil)
+		if err != nil {
+			log.Printf("%s CancelOrder: failed to begin transaction for order id=%s: %v", orderCtrlTag, orderId, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to start transaction"})
+			return
+		}
+		defer func() {
+			if r := recover(); r != nil {
+				if rollbackErr := txn.Rollback(); rollbackErr != nil {
+					log.Printf("%s CancelOrder: panic occurred and rollback failed for order id=%s: %v", orderCtrlTag, orderId, rollbackErr)
+				} else {
+					log.Printf("%s CancelOrder: panic occurred but transaction rolled back successfully for order id=%s", orderCtrlTag, orderId)
+				}
+				panic(r) // re-throw panic after handling
+			}
+		}()
+		//step to cancel order:
+		//unlock balances
+		//update order status to cancelled
+		//remove from order book in redis
+		log.Printf("%s CancelOrder: attempting to cancel order id=%s", orderCtrlTag, orderId)
+		order, err := q.UpdateOrderStatusTx(txn, orderId, string(models.CANCELLED))
+		if err != nil || order == nil {
+			log.Printf("%s CancelOrder: failed to cancel order id=%s", orderCtrlTag, orderId)
+			if rollbackErr := txn.Rollback(); rollbackErr != nil {
+				log.Printf("%s CancelOrder: rollback failed for order id=%s: %v", orderCtrlTag, orderId, rollbackErr)
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to cancel order"})
+			return
+		}
+		if order.Side == "sell" {
+			err = q.UnlockBalanceTx(txn, order.UserID, order.BaseAsset, order.Quantity-order.FilledQuantity)
+			if err != nil {
+				log.Printf("%s CancelOrder: failed to unlock balance for order id=%s: %v", orderCtrlTag, orderId, err)
+				if rollbackErr := txn.Rollback(); rollbackErr != nil {
+					log.Printf("%s CancelOrder: rollback failed for order id=%s after unlock failure: %v", orderCtrlTag, orderId, rollbackErr)
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to unlock balance"})
+				return
+			}
+		} else {
+			err = q.UnlockUSDTx(txn, order.UserID, order.Price*(order.Quantity-order.FilledQuantity))
+			if err != nil {
+				log.Printf("%s CancelOrder: failed to unlock balance for order id=%s: %v", orderCtrlTag, orderId, err)
+				if rollbackErr := txn.Rollback(); rollbackErr != nil {
+					log.Printf("%s CancelOrder: rollback failed for order id=%s after unlock failure: %v", orderCtrlTag, orderId, rollbackErr)
+				}
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to unlock balance"})
+				return
+			}
+		}
+		//now remove from redis as well
+		redisCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		order.Status = string(models.CANCELLED)
+		if err = redisClient.UpdateOrderInRedis(redisCtx, *order); err != nil {
+			log.Printf("%s CancelOrder: failed to update order in redis for order id=%s: %v", orderCtrlTag, orderId, err)
+			if rollbackErr := txn.Rollback(); rollbackErr != nil {
+				log.Printf("%s CancelOrder: rollback failed for order id=%s after redis update failure: %v", orderCtrlTag, orderId, rollbackErr)
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to update order in cache"})
+			return
+		}
+		log.Printf("%s CancelOrder: successfully cancelled order id=%s", orderCtrlTag, orderId)
+
+		if err := txn.Commit(); err != nil {
+			log.Printf("%s CancelOrder: failed to commit transaction for order id=%s: %v", orderCtrlTag, orderId, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to commit transaction"})
+			return
+		}
+		log.Printf("%s CancelOrder: successfully cancelled order id=%s", orderCtrlTag, orderId)
+		c.JSON(http.StatusOK, gin.H{"message": "Order cancelled successfully"})
+	}
+}
