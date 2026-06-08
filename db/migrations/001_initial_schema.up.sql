@@ -1,3 +1,5 @@
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE TABLE users (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     email         TEXT        UNIQUE NOT NULL,
@@ -7,7 +9,8 @@ CREATE TABLE users (
     locked_balance NUMERIC(28,8) NOT NULL DEFAULT 0 CHECK (locked_balance >= 0),
     role          TEXT        NOT NULL CHECK (role IN ('user', 'admin')) DEFAULT 'user'
 );
-CREATE TABLE assets(
+
+CREATE TABLE assets (
     symbol        TEXT        PRIMARY KEY,
     name          TEXT        NOT NULL,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -15,7 +18,7 @@ CREATE TABLE assets(
     icon_url      TEXT        NULL
 );
 
-CREATE TABLE markets(
+CREATE TABLE markets (
     id           TEXT        PRIMARY KEY DEFAULT gen_random_uuid(),
     name         TEXT        NOT NULL,
     base_asset   TEXT        NOT NULL REFERENCES assets(symbol) ON DELETE CASCADE,
@@ -27,11 +30,9 @@ CREATE TABLE markets(
     taker_fee     NUMERIC(5,2)  NOT NULL CHECK (taker_fee >= 0),
     maker_fee     NUMERIC(5,2)  NOT NULL CHECK (maker_fee >= 0),
     current_price   NUMERIC(28,8) NOT NULL DEFAULT 0 CHECK (current_price >= 0),
-    UNIQUE (base_asset, quote_asset),
-    
-)
+    UNIQUE (base_asset, quote_asset)
+);
 
- 
 CREATE TABLE balances (
     user_id   UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     asset     TEXT        NOT NULL REFERENCES assets(symbol) ON DELETE CASCADE,
@@ -39,6 +40,7 @@ CREATE TABLE balances (
     locked    NUMERIC(28,8) NOT NULL DEFAULT 0 CHECK (locked    >= 0),
     PRIMARY KEY (user_id, asset)
 );
+
 CREATE TABLE orders (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id       UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -46,12 +48,13 @@ CREATE TABLE orders (
     quantity      NUMERIC(28,8) NOT NULL CHECK (quantity > 0),
     price         NUMERIC(28,8)  CHECK (price >= 0), --price can be 0 for market orders
     side          TEXT        NOT NULL CHECK (side IN ('buy', 'sell')),
-    status        TEXT        NOT NULL CHECK (status IN ('open', 'filled', 'cancelled', 'pending')),
+    status        TEXT        NOT NULL CHECK (status IN ('open', 'filled', 'partially_filled', 'cancelled', 'closed', 'pending')),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    type          TEXT        NOT NULL CHECK (type IN ('limit', 'market'))
+    order_type    TEXT        NOT NULL CHECK (order_type IN ('limit', 'market')),
     filled_quantity NUMERIC(28,8) NOT NULL DEFAULT 0 CHECK (filled_quantity >= 0),
     UNIQUE (user_id, market_id, created_at)
 );
+
 CREATE TABLE trades (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     buy_order_id  UUID        NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
@@ -62,6 +65,7 @@ CREATE TABLE trades (
     quote_asset TEXT        NOT NULL REFERENCES assets(symbol) ON DELETE CASCADE,
     base_asset TEXT        NOT NULL REFERENCES assets(symbol) ON DELETE CASCADE
 );
+
 CREATE TABLE transactions (
     id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id       UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -70,6 +74,7 @@ CREATE TABLE transactions (
     type          TEXT        NOT NULL CHECK (type IN ('deposit', 'withdrawal')),
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
 CREATE TABLE candles (
     id          UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
     market_id   TEXT          NOT NULL REFERENCES markets(id) ON DELETE CASCADE,
@@ -83,4 +88,5 @@ CREATE TABLE candles (
     trade_count BIGINT        NOT NULL DEFAULT 1,
     UNIQUE (market_id, interval, open_time)
 );
+
 CREATE INDEX idx_candles_market_interval_time ON candles (market_id, interval, open_time DESC);

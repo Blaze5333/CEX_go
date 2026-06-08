@@ -28,7 +28,13 @@ func Deposit(q *queries.Queries) gin.HandlerFunc {
 		}
 
 		log.Printf("%s Deposit: crediting userID=%s asset=%s amount=%f", balanceCtrlTag, userId.(string), req.Asset, req.Amount)
-		if err := q.CreditBalance(userId.(string), req.Asset, req.Amount); err != nil {
+		var err error
+		if req.Asset == "USD" {
+			err = q.CreditUSD(userId.(string), req.Amount)
+		} else {
+			err = q.CreditBalance(userId.(string), req.Asset, req.Amount)
+		}
+		if err != nil {
 			log.Printf("%s Deposit: failed to credit balance for userID=%s asset=%s: %v", balanceCtrlTag, userId.(string), req.Asset, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to credit balance"})
 			return
@@ -63,6 +69,25 @@ func GetBalances(q *queries.Queries) gin.HandlerFunc {
 		}
 		log.Printf("%s GetBalances: returning %d balance(s) for userID=%s", balanceCtrlTag, len(balances), userID.(string))
 		c.JSON(http.StatusOK, gin.H{"balances": balances})
+	}
+}
+
+func GetPortfolio(q *queries.Queries) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		log.Printf("%s GetPortfolio: handling portfolio request", balanceCtrlTag)
+		userID, exists := c.Get("user_id")
+		if !exists {
+			log.Printf("%s GetPortfolio: user_id not found in context", balanceCtrlTag)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID not found in context", "message": "Unauthorized"})
+			return
+		}
+		portfolio, err := q.GetPortfolio(userID.(string))
+		if err != nil {
+			log.Printf("%s GetPortfolio: failed for userID=%s: %v", balanceCtrlTag, userID.(string), err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to fetch portfolio"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"portfolio": portfolio})
 	}
 }
 

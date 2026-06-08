@@ -67,3 +67,54 @@ func (q *Queries) GetUserByID(userID string) (*models.User, error) {
 		Role:  role,
 	}, nil
 }
+func (q *Queries) UnlockUSD(userId string, amount float64) error {
+	//need to lock the row while updatin
+	log.Printf("%s UnlockUSD: attempting to unlock USD %.2f for userID=%s", userTag, amount, userId)
+	tx, err := q.db.Begin()
+	if err != nil {
+		log.Printf("%s UnlockUSD: failed to begin transaction for userID=%s: %v", userTag, userId, err)
+		return err
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			log.Printf("%s UnlockUSD: rolling back transaction for userID=%s due to error: %v", userTag, userId, err)
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+			if err != nil {
+				log.Printf("%s UnlockUSD: failed to commit transaction for userID=%s: %v", userTag, userId, err)
+			}
+		}
+	}()
+
+	var currentLockedBalance float64
+	err = tx.QueryRow(`
+	SELECT locked_balance
+	FROM users
+	WHERE id = $1
+	FOR UPDATE
+	`, userId).Scan(&currentLockedBalance)
+	if err != nil {
+		log.Printf("%s UnlockUSD: failed to fetch locked balance for userID=%s: %v", userTag, userId, err)
+		return err
+	}
+	if currentLockedBalance < amount {
+		log.Printf("%s UnlockUSD: insufficient locked balance to unlock USD %.2f for userID=%s: current locked balance is %.2f", userTag, amount, userId, currentLockedBalance)
+		return sql.ErrNoRows // or a custom error indicating insufficient locked balance
+	}
+	log.Printf("%s UnlockUSD: unlocking USD %.2f for userID=%s", userTag, amount, userId)
+	_, err = tx.Exec(`
+	UPDATE users
+	SET locked_balance = locked_balance - $1,USD_balance = USD_balance + $1
+	WHERE id = $2 AND locked_balance >= $1
+	`, amount, userId)
+	if err != nil {
+		log.Printf("%s UnlockUSD: failed to unlock USD for userID=%s: %v", userTag, userId, err)
+		return err
+	}
+	log.Printf("%s UnlockUSD: successfully unlocked USD %.2f for userID=%s", userTag, amount, userId)
+	return nil
+}

@@ -21,6 +21,38 @@ func (q *Queries) LockBalance(userID, asset string, amount float64) error {
 		return err
 	}
 	defer tx.Rollback()
+	if asset == "USD" {
+		var usdBalance float64
+		err = tx.QueryRow(`
+			SELECT USD_balance
+			FROM users
+			WHERE id = $1
+			FOR UPDATE
+		`, userID).Scan(&usdBalance)
+		if err != nil {
+			log.Printf("%s LockBalance: failed to query USD balance for userID=%s: %v", balanceTag, userID, err)
+			return err
+		}
+		if usdBalance < amount {
+			log.Printf("%s LockBalance: insufficient USD balance for userID=%s available=%f requested=%f", balanceTag, userID, usdBalance, amount)
+			return sql.ErrNoRows
+		}
+		_, err = tx.Exec(`
+			UPDATE users
+			SET USD_balance = USD_balance - $1, locked_balance = locked_balance + $1
+			WHERE id = $2
+		`, amount, userID)
+		if err != nil {
+			log.Printf("%s LockBalance: failed to update USD balance for userID=%s: %v", balanceTag, userID, err)
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			log.Printf("%s LockBalance: failed to commit transaction for userID=%s: %v", balanceTag, userID, err)
+			return err
+		}
+		log.Printf("%s LockBalance: successfully locked %f USD for userID=%s", balanceTag, amount, userID)
+		return nil
+	}
 
 	var available float64
 	err = tx.QueryRow(`
@@ -54,6 +86,51 @@ func (q *Queries) LockBalance(userID, asset string, amount float64) error {
 	}
 	log.Printf("%s LockBalance: successfully locked %f of %s for userID=%s", balanceTag, amount, asset, userID)
 	return nil
+}
+
+func (q *Queries) LockBalanceTx(tx *sql.Tx, userID, asset string, amount float64) error {
+	log.Printf("%s LockBalanceTx: userID=%s asset=%s amount=%f", balanceTag, userID, asset, amount)
+	if asset == "USD" {
+		var usdBalance float64
+		err := tx.QueryRow(`
+			SELECT USD_balance
+			FROM users
+			WHERE id = $1
+			FOR UPDATE
+		`, userID).Scan(&usdBalance)
+		if err != nil {
+			return err
+		}
+		if usdBalance < amount {
+			return sql.ErrNoRows
+		}
+		_, err = tx.Exec(`
+			UPDATE users
+			SET USD_balance = USD_balance - $1, locked_balance = locked_balance + $1
+			WHERE id = $2
+		`, amount, userID)
+		return err
+	}
+
+	var available float64
+	err := tx.QueryRow(`
+		SELECT available
+		FROM balances
+		WHERE user_id = $1 AND asset = $2
+		FOR UPDATE
+	`, userID, asset).Scan(&available)
+	if err != nil {
+		return err
+	}
+	if available < amount {
+		return sql.ErrNoRows
+	}
+	_, err = tx.Exec(`
+		UPDATE balances
+		SET available = available - $1, locked = locked + $1
+		WHERE user_id = $2 AND asset = $3
+	`, amount, userID, asset)
+	return err
 }
 
 func (q *Queries) UnlockBalance(userID, asset string, amount float64) error {
@@ -92,6 +169,32 @@ func (q *Queries) UnlockBalance(userID, asset string, amount float64) error {
 	}
 	log.Printf("%s UnlockBalance: successfully unlocked %f of %s for userID=%s", balanceTag, amount, asset, userID)
 	return nil
+}
+
+func (q *Queries) UnlockBalanceTx(tx *sql.Tx, userID, asset string, amount float64) error {
+	log.Printf("%s UnlockBalanceTx: userID=%s asset=%s amount=%f", balanceTag, userID, asset, amount)
+	if amount <= 0 {
+		return nil
+	}
+	var locked float64
+	err := tx.QueryRow(`
+		SELECT locked
+		FROM balances
+		WHERE user_id = $1 AND asset = $2
+		FOR UPDATE
+	`, userID, asset).Scan(&locked)
+	if err != nil {
+		return err
+	}
+	if locked < amount {
+		return sql.ErrNoRows
+	}
+	_, err = tx.Exec(`
+		UPDATE balances
+		SET locked = locked - $1, available = available + $1
+		WHERE user_id = $2 AND asset = $3
+	`, amount, userID, asset)
+	return err
 }
 
 func (q *Queries) TransferFromLocked(fromUserID, toUserID, asset string, amount float64) error {
@@ -163,6 +266,20 @@ func (q *Queries) CreditBalance(userID, asset string, amount float64) error {
 	log.Printf("%s CreditBalance: successfully credited %f of %s for userID=%s", balanceTag, amount, asset, userID)
 	return nil
 }
+
+func (q *Queries) CreditBalanceTx(tx *sql.Tx, userID, asset string, amount float64) error {
+	log.Printf("%s CreditBalanceTx: userID=%s asset=%s amount=%f", balanceTag, userID, asset, amount)
+	if amount <= 0 {
+		return nil
+	}
+	_, err := tx.Exec(`
+		INSERT INTO balances (user_id, asset, available, locked)
+		VALUES ($1, $2, $3, 0)
+		ON CONFLICT (user_id, asset)
+		DO UPDATE SET available = balances.available + $3
+	`, userID, asset, amount)
+	return err
+}
 func (q *Queries) CreditUSD(userID string, amount float64) error {
 	log.Printf("%s CreditUSD: userID=%s amount=%f", balanceTag, userID, amount)
 	//user table already has usd balance so we will just update that
@@ -177,6 +294,19 @@ func (q *Queries) CreditUSD(userID string, amount float64) error {
 	}
 	log.Printf("%s CreditUSD: successfully credited %f USD for userID=%s", balanceTag, amount, userID)
 	return nil
+}
+
+func (q *Queries) CreditUSDTx(tx *sql.Tx, userID string, amount float64) error {
+	log.Printf("%s CreditUSDTx: userID=%s amount=%f", balanceTag, userID, amount)
+	if amount <= 0 {
+		return nil
+	}
+	_, err := tx.Exec(`
+		UPDATE users
+		SET USD_balance = USD_balance + $1
+		WHERE id = $2
+	`, amount, userID)
+	return err
 }
 func (q *Queries) DebitUSD(userID string, amount float64) error {
 	log.Printf("%s DebitUSD: userID=%s amount=%f", balanceTag, userID, amount)
@@ -217,6 +347,58 @@ func (q *Queries) DebitUSD(userID string, amount float64) error {
 	}
 	log.Printf("%s DebitUSD: successfully debited %f USD for userID=%s", balanceTag, amount, userID)
 	return nil
+}
+
+func (q *Queries) DebitUSDTx(tx *sql.Tx, userID string, amount float64) error {
+	log.Printf("%s DebitUSDTx: userID=%s amount=%f", balanceTag, userID, amount)
+	if amount <= 0 {
+		return nil
+	}
+	var lockedBalance float64
+	err := tx.QueryRow(`
+		SELECT locked_balance
+		FROM users
+		WHERE id = $1
+		FOR UPDATE
+	`, userID).Scan(&lockedBalance)
+	if err != nil {
+		return err
+	}
+	if lockedBalance < amount {
+		return sql.ErrNoRows
+	}
+	_, err = tx.Exec(`
+		UPDATE users
+		SET locked_balance = locked_balance - $1
+		WHERE id = $2
+	`, amount, userID)
+	return err
+}
+
+func (q *Queries) UnlockUSDTx(tx *sql.Tx, userID string, amount float64) error {
+	log.Printf("%s UnlockUSDTx: userID=%s amount=%f", balanceTag, userID, amount)
+	if amount <= 0 {
+		return nil
+	}
+	var lockedBalance float64
+	err := tx.QueryRow(`
+		SELECT locked_balance
+		FROM users
+		WHERE id = $1
+		FOR UPDATE
+	`, userID).Scan(&lockedBalance)
+	if err != nil {
+		return err
+	}
+	if lockedBalance < amount {
+		return sql.ErrNoRows
+	}
+	_, err = tx.Exec(`
+		UPDATE users
+		SET locked_balance = locked_balance - $1, USD_balance = USD_balance + $1
+		WHERE id = $2
+	`, amount, userID)
+	return err
 }
 func (q *Queries) DebitBalance(userID, asset string, amount float64) error {
 	log.Printf("%s DebitBalance: userID=%s asset=%s amount=%f", balanceTag, userID, asset, amount)
@@ -261,12 +443,56 @@ func (q *Queries) DebitBalance(userID, asset string, amount float64) error {
 	return nil
 }
 
+func (q *Queries) DebitBalanceTx(tx *sql.Tx, userID, asset string, amount float64) error {
+	log.Printf("%s DebitBalanceTx: userID=%s asset=%s amount=%f", balanceTag, userID, asset, amount)
+	if amount <= 0 {
+		return nil
+	}
+	var locked float64
+	err := tx.QueryRow(`
+		SELECT locked
+		FROM balances
+		WHERE user_id = $1 AND asset = $2
+		FOR UPDATE
+	`, userID, asset).Scan(&locked)
+	if err != nil {
+		return err
+	}
+	if locked < amount {
+		return sql.ErrNoRows
+	}
+	_, err = tx.Exec(`
+		UPDATE balances
+		SET locked = locked - $1
+		WHERE user_id = $2 AND asset = $3
+	`, amount, userID, asset)
+	return err
+}
+
 func (q *Queries) GetBalances(userID string) ([]models.Balance, error) {
 	log.Printf("%s GetBalances: fetching balances for userID=%s", balanceTag, userID)
+	var usdAvailable, usdLocked float64
+	err := q.db.QueryRow(`
+		SELECT USD_balance, locked_balance
+		FROM users
+		WHERE id = $1
+	`, userID).Scan(&usdAvailable, &usdLocked)
+	if err != nil {
+		log.Printf("%s GetBalances: failed to query USD balance for userID=%s: %v", balanceTag, userID, err)
+		return nil, err
+	}
+
+	balances := []models.Balance{{
+		Asset:     "USD",
+		Available: usdAvailable,
+		Locked:    usdLocked,
+	}}
+
 	rows, err := q.db.Query(`
 		SELECT asset, available, locked
 		FROM balances
-		WHERE user_id = $1
+		WHERE user_id = $1 AND asset <> 'USD'
+		ORDER BY asset
 	`, userID)
 	if err != nil {
 		log.Printf("%s GetBalances: query failed for userID=%s: %v", balanceTag, userID, err)
@@ -274,7 +500,6 @@ func (q *Queries) GetBalances(userID string) ([]models.Balance, error) {
 	}
 	defer rows.Close()
 
-	var balances []models.Balance
 	for rows.Next() {
 		var b models.Balance
 		if err := rows.Scan(&b.Asset, &b.Available, &b.Locked); err != nil {
@@ -285,6 +510,45 @@ func (q *Queries) GetBalances(userID string) ([]models.Balance, error) {
 	}
 	log.Printf("%s GetBalances: returned %d balance(s) for userID=%s", balanceTag, len(balances), userID)
 	return balances, nil
+}
+
+func (q *Queries) GetPortfolio(userID string) (*models.Portfolio, error) {
+	log.Printf("%s GetPortfolio: fetching portfolio for userID=%s", balanceTag, userID)
+	balances, err := q.GetBalances(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	totalUSD := 0.0
+	openExposure := 0.0
+	for _, balance := range balances {
+		if balance.Asset == "USD" {
+			totalUSD += balance.Available + balance.Locked
+			openExposure += balance.Locked
+			continue
+		}
+
+		var price float64
+		err := q.db.QueryRow(`
+			SELECT current_price
+			FROM markets
+			WHERE base_asset = $1 AND quote_asset = 'USD' AND is_active = TRUE
+			ORDER BY created_at DESC
+			LIMIT 1
+		`, balance.Asset).Scan(&price)
+		if err != nil && err != sql.ErrNoRows {
+			log.Printf("%s GetPortfolio: failed to price asset=%s: %v", balanceTag, balance.Asset, err)
+			return nil, err
+		}
+		totalUSD += (balance.Available + balance.Locked) * price
+		openExposure += balance.Locked * price
+	}
+
+	return &models.Portfolio{
+		Balances:     balances,
+		TotalUSD:     totalUSD,
+		OpenExposure: openExposure,
+	}, nil
 }
 
 func (q *Queries) InitializeBalance(userID string) error {

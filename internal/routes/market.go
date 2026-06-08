@@ -17,5 +17,5 @@ func MarketRoutes(incomingRoutes *gin.Engine, q *queries.Queries) {
 //in golang how to continue a function which is in another file but in same package?
 
 func MarketAdminRoutes(incomingRoutes *gin.Engine, q *queries.Queries) {
-	incomingRoutes.POST("/assets", middleware.VerifyAdmin(q), controllers.CreateAsset(q)) // create new asset
+	incomingRoutes.POST("/market", middleware.VerifyAdmin(q), controllers.CreateMarket(q)) // create new asset
 }

@@ -6,6 +6,12 @@ type Balance struct {
 	Locked    float64 `json:"locked"`
 }
 
+type Portfolio struct {
+	Balances     []Balance `json:"balances"`
+	TotalUSD     float64   `json:"total_usd"`
+	OpenExposure float64   `json:"open_exposure"`
+}
+
 type DepositRequest struct {
 	Asset  string  `json:"asset" binding:"required"`
 	Amount float64 `json:"amount" binding:"required,gt=0"`

@@ -64,6 +64,12 @@ func LoginUser(q *queries.Queries) gin.HandlerFunc {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid email or password", "message": "Incorrect password"})
 			return
 		}
+		dbUser, err := q.GetUserByID(id)
+		if err != nil {
+			log.Printf("%s LoginUser: failed to fetch user role for userID=%s email=%s: %v", usersCtrlTag, id, user.Email, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to fetch user profile"})
+			return
+		}
 		authToken, err := auth.GenerateJWT(id, user.Email)
 		if err != nil {
 			log.Printf("%s LoginUser: failed to generate auth token for userID=%s email=%s: %v", usersCtrlTag, id, user.Email, err)
@@ -71,6 +77,6 @@ func LoginUser(q *queries.Queries) gin.HandlerFunc {
 			return
 		}
 		log.Printf("%s LoginUser: successful login for userID=%s email=%s", usersCtrlTag, id, user.Email)
-		c.JSON(http.StatusOK, gin.H{"id": id, "email": user.Email, "token": authToken})
+		c.JSON(http.StatusOK, gin.H{"id": id, "email": user.Email, "role": dbUser.Role, "token": authToken})
 	}
 }

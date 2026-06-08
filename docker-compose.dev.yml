@@ -3,9 +3,14 @@ services:
     build:
       context: .
       target: dev
+    command: ["air", "-c", ".air.toml"]
     volumes:
       - .:/app
       - go_mod_cache:/go/pkg/mod
+      - go_build_cache:/root/.cache/go-build
+      - air_tmp:/app/tmp
 
 volumes:
   go_mod_cache:
+  go_build_cache:
+  air_tmp:

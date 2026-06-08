@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CEX Go Exchange</title>
+    <link rel="stylesheet" href="/web/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">CX</div>
+          <div>
+            <strong>CEX Go</strong>
+            <span>Trading console</span>
+          </div>
+        </div>
+
+        <section class="panel auth-panel">
+          <div class="panel-head">
+            <h2>Account</h2>
+            <button id="logoutBtn" class="ghost hidden" type="button">Logout</button>
+          </div>
+          <div id="sessionBox" class="session muted">Not signed in</div>
+          <div class="tabs">
+            <button class="tab active" data-auth-tab="login" type="button">Sign in</button>
+            <button class="tab" data-auth-tab="register" type="button">Register</button>
+          </div>
+          <form id="authForm" class="stack">
+            <input id="emailInput" type="email" placeholder="Email" autocomplete="email" required />
+            <input id="passwordInput" type="password" placeholder="Password" autocomplete="current-password" required />
+            <button id="authSubmit" class="primary" type="submit">Sign in</button>
+          </form>
+        </section>
+
+        <section id="adminSetupPanel" class="panel hidden">
+          <div class="panel-head">
+            <h2>Balances</h2>
+            <button id="refreshBalancesBtn" class="ghost" type="button">Refresh</button>
+          </div>
+          <div id="balancesList" class="list compact muted">Sign in to view balances.</div>
+          <form id="depositForm" class="stack split-form">
+            <input id="depositAsset" placeholder="Asset e.g. USD" required />
+            <input id="depositAmount" type="number" step="0.00000001" min="0" placeholder="Amount" required />
+            <button class="secondary" type="submit">Deposit</button>
+          </form>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Portfolio</h2>
+            <button id="refreshPortfolioBtn" class="ghost" type="button">Refresh</button>
+          </div>
+          <div class="portfolio-metrics">
+            <div>
+              <span class="muted">Estimated Value</span>
+              <strong id="portfolioValue">$0.00</strong>
+            </div>
+            <div>
+              <span class="muted">Locked Exposure</span>
+              <strong id="portfolioExposure">$0.00</strong>
+            </div>
+          </div>
+          <div id="tradesList" class="list compact muted">No trades yet.</div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Admin Setup</h2>
+          </div>
+          <form id="assetForm" class="stack split-form">
+            <input id="assetSymbol" placeholder="Symbol e.g. BTC" required />
+            <input id="assetName" placeholder="Name e.g. Bitcoin" required />
+            <button class="secondary" type="submit">Create Asset</button>
+          </form>
+          <form id="marketForm" class="stack split-form">
+            <input id="marketName" placeholder="Market name e.g. BTC/USD" required />
+            <input id="marketBase" placeholder="Base asset e.g. BTC" required />
+            <input id="marketQuote" placeholder="Quote asset e.g. USD" required />
+            <div class="grid-2">
+              <input id="marketMin" type="number" step="0.00000001" min="0" placeholder="Min size" required />
+              <input id="marketMax" type="number" step="0.00000001" min="0" placeholder="Max size" required />
+            </div>
+            <div class="grid-2">
+              <input id="marketMaker" type="number" step="0.01" min="0" placeholder="Maker fee" required />
+              <input id="marketTaker" type="number" step="0.01" min="0" placeholder="Taker fee" required />
+            </div>
+            <button class="secondary" type="submit">Create Market</button>
+          </form>
+        </section>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <h1>Exchange</h1>
+            <p>Markets, order book, live websocket updates, and account actions.</p>
+          </div>
+          <div id="statusPill" class="status">API idle</div>
+        </header>
+
+        <section class="market-strip panel">
+          <div class="panel-head">
+            <h2>Markets</h2>
+            <button id="refreshMarketsBtn" class="ghost" type="button">Refresh</button>
+          </div>
+          <div id="marketsList" class="market-list muted">No markets loaded.</div>
+        </section>
+
+        <section class="trade-grid">
+          <div class="panel order-book-panel">
+            <div class="panel-head">
+              <div>
+                <h2>Order Book</h2>
+                <span id="selectedMarketLabel" class="muted">Select a market</span>
+              </div>
+              <button id="refreshBookBtn" class="ghost" type="button">Refresh</button>
+            </div>
+            <div class="book">
+              <div>
+                <div class="book-title sell">Sells</div>
+                <div id="sellBook" class="book-rows muted">No sell orders.</div>
+              </div>
+              <div>
+                <div class="book-title buy">Buys</div>
+                <div id="buyBook" class="book-rows muted">No buy orders.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Place Order</h2>
+            </div>
+            <form id="orderForm" class="stack">
+              <div class="segmented" role="tablist">
+                <button class="segment active" data-side="buy" type="button">Buy</button>
+                <button class="segment" data-side="sell" type="button">Sell</button>
+              </div>
+              <select id="orderType">
+                <option value="limit">Limit</option>
+                <option value="market">Market</option>
+              </select>
+              <input id="orderPrice" type="number" step="0.00000001" min="0" placeholder="Price" required />
+              <input id="orderQuantity" type="number" step="0.00000001" min="0" placeholder="Quantity" required />
+              <div id="orderSummary" class="summary muted">Select a market to begin.</div>
+              <button id="submitOrderBtn" class="primary" type="submit">Place Buy Order</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Live Feed</h2>
+            <span id="wsStatus" class="muted">Socket disconnected</span>
+          </div>
+          <div id="eventFeed" class="feed muted">WebSocket events will appear here.</div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+    <script src="/web/app.js" defer></script>
+  </body>
+</html>

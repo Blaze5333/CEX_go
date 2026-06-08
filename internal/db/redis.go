@@ -95,7 +95,7 @@ func FetchOrderWithSideFromRedis(ctx context.Context, rdb *redis.Client, key, si
 	entries := []redis.Z{}
 
 	var err error
-	if side == "Buy" {
+	if side == "buy" {
 		entries, err = rdb.ZRevRangeWithScores(ctx, key, 0, -1).Result()
 	} else {
 		entries, err = rdb.ZRangeWithScores(ctx, key, 0, -1).Result()
@@ -131,8 +131,8 @@ func FetchOrderWithSideFromRedis(ctx context.Context, rdb *redis.Client, key, si
 }
 
 func (c *RedisConfig) GetOrderBookFromRedisByMarketId(marketId string) (*MarketDepth, error) {
-	sellKey := fmt.Sprintf("orderbook:%s:Sell", marketId)
-	buyKey := fmt.Sprintf("orderbook:%s:Buy", marketId)
+	sellKey := fmt.Sprintf("orderbook:%s:sell", marketId)
+	buyKey := fmt.Sprintf("orderbook:%s:buy", marketId)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	var sells, buys []models.Order
@@ -142,12 +142,12 @@ func (c *RedisConfig) GetOrderBookFromRedisByMarketId(marketId string) (*MarketD
 
 	go func() {
 		defer wg.Done()
-		buys, buyError = FetchOrderWithSideFromRedis(ctx, c.RdbClient, buyKey, "Buy")
+		buys, buyError = FetchOrderWithSideFromRedis(ctx, c.RdbClient, buyKey, "buy")
 	}()
 
 	go func() {
 		defer wg.Done()
-		sells, sellError = FetchOrderWithSideFromRedis(ctx, c.RdbClient, sellKey, "Sell")
+		sells, sellError = FetchOrderWithSideFromRedis(ctx, c.RdbClient, sellKey, "sell")
 	}()
 
 	wg.Wait()
@@ -173,7 +173,7 @@ func (c *RedisConfig) GetOrderBookFromRedisByMarketId(marketId string) (*MarketD
 	}, nil
 }
 func (C *RedisConfig) BestAskFromRedis(ctx context.Context, marketId string) (*models.Order, error) {
-	sellKey := fmt.Sprintf("orderbook:%s:Sell", marketId)
+	sellKey := fmt.Sprintf("orderbook:%s:sell", marketId)
 	entries, err := C.RdbClient.ZRangeWithScores(ctx, sellKey, 0, 0).Result()
 	if err != nil {
 		log.Printf("Failed to fetch best ask from redis for market %s: %v", marketId, err)
@@ -203,7 +203,7 @@ func (C *RedisConfig) BestAskFromRedis(ctx context.Context, marketId string) (*m
 	return order, nil
 }
 func (C *RedisConfig) BestBidFromRedis(ctx context.Context, marketId string) (*models.Order, error) {
-	buyKey := fmt.Sprintf("orderbook:%s:Buy", marketId)
+	buyKey := fmt.Sprintf("orderbook:%s:buy", marketId)
 	entries, err := C.RdbClient.ZRevRangeWithScores(ctx, buyKey, 0, 0).Result()
 	if err != nil {
 		log.Printf("Failed to fetch best bid from redis for market %s: %v", marketId, err)
@@ -241,7 +241,18 @@ func (C *RedisConfig) UpdateOrderInRedis(ctx context.Context, order models.Order
 		pipe.ZRem(ctx, bookKey, order.ID)
 		//remove from details hash as well since we won't need it anymore
 		pipe.Del(ctx, detailsKey)
-		_, err := pipe.Exec(ctx)
+		payload := map[string]interface{}{
+			"type":      "order_remove",
+			"order_id":  order.ID,
+			"market_id": order.MarketID,
+		}
+		payloadBytes, err := json.Marshal(payload)
+		if err != nil {
+			log.Printf("Failed to marshal order remove payload for order %s: %v", order.ID, err)
+		} else {
+			C.RdbClient.Publish(ctx, fmt.Sprintf("orderbook:%s", order.MarketID), payloadBytes)
+		}
+		_, err = pipe.Exec(ctx)
 		if err != nil {
 			log.Printf("Failed to remove order from redis for order %s: %v", order.ID, err)
 		}
@@ -274,10 +285,10 @@ func (C *RedisConfig) UpdateOrderInRedis(ctx context.Context, order models.Order
 		"filled_quantity": order.FilledQuantity,
 		"status":          order.Status,
 	}
-    payloadBytes, err := json.Marshal(payload)
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("Failed to marshal order update payload for order %s: %v", order.ID, err)
-	} else {	
+	} else {
 		C.RdbClient.Publish(ctx, fmt.Sprintf("orderbook:%s", order.MarketID), payloadBytes)
 	}
 	_, err = pipe.Exec(ctx)
@@ -311,13 +322,13 @@ func (C *RedisConfig) InserOrderToRedis(ctx context.Context, order models.Order)
 		"type":            "new_order",
 		"order_id":        order.ID,
 		"market_id":       order.MarketID,
-		"side":            order.Side,	
+		"side":            order.Side,
 		"price":           order.Price,
 		"quantity":        order.Quantity,
 		"filled_quantity": order.FilledQuantity,
 		"status":          order.Status,
 	}
-	payloadBytes, err := json.Marshal(payload)	
+	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("Failed to marshal new order payload for order %s: %v", order.ID, err)
 	} else {

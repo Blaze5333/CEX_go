@@ -33,7 +33,7 @@ func GenerateJWT(userID, email string) (string, error) {
 		UserID: userID,
 		Email:  email,
 		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   fmt.Sprintf("%d", userID),
+			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(10 * 24 * time.Hour)),
 		},

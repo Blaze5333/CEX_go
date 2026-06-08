@@ -12,6 +12,7 @@ import (
 func BalanceRoutes(incomingRoutes *gin.Engine, q *queries.Queries) {
 	incomingRoutes.POST("/deposit", middleware.VerifyUser(q), controllers.Deposit(q))     // mock deposit any asset
 	incomingRoutes.GET("/balances", middleware.VerifyUser(q), controllers.GetBalances(q)) // get all balances for a user
+	incomingRoutes.GET("/portfolio", middleware.VerifyUser(q), controllers.GetPortfolio(q))
 
 }
 func BalanceAdminRoutes(incomingRoutes *gin.Engine, q *queries.Queries) {

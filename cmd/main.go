@@ -3,13 +3,17 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/Blaze5333/cex/db/queries"
 	"github.com/Blaze5333/cex/internal/db"
 	"github.com/Blaze5333/cex/internal/matching"
 	"github.com/Blaze5333/cex/internal/routes"
 	"github.com/Blaze5333/cex/internal/ws"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	"golang.org/x/net/websocket"
@@ -62,10 +66,29 @@ func main() {
 	}
 
 	r := gin.Default()
+	r.Use(cors.New(cors.Config{
+		AllowOriginFunc: func(origin string) bool {
+			if origin == "" {
+				return true
+			}
+			if origin == "http://localhost:8080" || origin == "http://localhost:5173" {
+				return true
+			}
+			return strings.HasPrefix(origin, "https://") &&
+				(origin == "https://blink-trade-hub.lovable.app" || strings.HasSuffix(origin, ".lovable.app"))
+		},
+		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}))
 	log.Printf("%s registering routes", mainTag)
 	routes.UserRoutes(r, q)
 	routes.MarketRoutes(r, q)
 	routes.BalanceRoutes(r, q)
+	routes.BalanceAdminRoutes(r, q)
+	routes.MarketAdminRoutes(r, q)
 	routes.OrderRoutes(r, q, &redisConfig, &matchingConfig)
 	wsServer := ws.WSServer{
 		Rdb:   redisClient,
@@ -74,14 +97,21 @@ func main() {
 	//websocket server
 	r.GET("/ws/:marketId", func(c *gin.Context) {
 		marketId := c.Param("marketId")
-		websocket.Handler(func(conn *websocket.Conn) {
-			wsServer.HandleConnection(conn, marketId)
-		}).ServeHTTP(c.Writer, c.Request)
+		server := websocket.Server{
+			Handshake: func(*websocket.Config, *http.Request) error {
+				return nil
+			},
+			Handler: func(conn *websocket.Conn) {
+				wsServer.HandleConnection(conn, marketId)
+			},
+		}
+		server.ServeHTTP(c.Writer, c.Request)
 	})
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("%s server starting on port %s", mainTag, port)
+	log.Printf("%s server started on port %s", mainTag, port)
 	log.Fatal(r.Run(":" + port))
 }

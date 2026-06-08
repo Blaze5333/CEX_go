@@ -16,6 +16,7 @@ type Market struct {
 	CurrentPrice float64   `json:"current_price"`
 }
 
+// ETH/USD
 type CreateMarketRequest struct {
 	Name         string  `json:"name" binding:"required"`
 	BaseAsset    string  `json:"base_asset" binding:"required"`

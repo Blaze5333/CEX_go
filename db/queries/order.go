@@ -3,6 +3,7 @@ package queries
 import (
 	"database/sql"
 	"log"
+	"time"
 
 	"github.com/Blaze5333/cex/internal/models"
 )
@@ -25,6 +26,36 @@ func (q *Queries) CreateOrder(userId, marketId, orderType, side string, price, q
 	return &models.Order{ID: id, UserID: userId, MarketID: marketId, OrderType: orderType, Side: side, Price: price, Quantity: quantity, Status: "pending", FilledQuantity: 0}, nil
 }
 
+func (q *Queries) CreateOrderTx(tx *sql.Tx, userId, marketId, orderType, side string, price, quantity float64) (*models.Order, error) {
+	log.Printf("%s CreateOrderTx: userID=%s marketID=%s type=%s side=%s price=%f quantity=%f", orderTag, userId, marketId, orderType, side, price, quantity)
+	var order models.Order
+	err := tx.QueryRow(`
+		INSERT INTO orders (user_id, market_id, order_type, side, price, quantity, status)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, user_id, market_id, order_type, side, price, quantity, status, created_at, filled_quantity
+	`, userId, marketId, orderType, side, price, quantity, "pending").Scan(
+		&order.ID,
+		&order.UserID,
+		&order.MarketID,
+		&order.OrderType,
+		&order.Side,
+		&order.Price,
+		&order.Quantity,
+		&order.Status,
+		&order.CreatedAt,
+		&order.FilledQuantity,
+	)
+	if err != nil {
+		log.Printf("%s CreateOrderTx: failed for userID=%s marketID=%s: %v", orderTag, userId, marketId, err)
+		return nil, err
+	}
+	if order.CreatedAt.IsZero() {
+		order.CreatedAt = time.Now()
+	}
+	log.Printf("%s CreateOrderTx: created order id=%s", orderTag, order.ID)
+	return &order, nil
+}
+
 func (q *Queries) GetOrderByID(id string) (*models.Order, error) {
 	log.Printf("%s GetOrderByID: orderID=%s", orderTag, id)
 	var o models.Order
@@ -44,15 +75,17 @@ func (q *Queries) GetOrderByID(id string) (*models.Order, error) {
 	return &o, nil
 }
 
-func (q *Queries) GetOrdersByUserID(userId string) ([]models.Order, error) {
-	log.Printf("%s GetOrdersByUserID: userID=%s", orderTag, userId)
+func (q *Queries) GetActiveOrdersByUserID(userId string) ([]models.Order, error) {
+	//join market_id with markets table to get base and quote asset for each order
+	log.Printf("%s GetActiveOrdersByUserID: userID=%s", orderTag, userId)
 	rows, err := q.db.Query(`
-		SELECT id, user_id, market_id, order_type, side, price, quantity, status, created_at, filled_quantity
-		FROM orders
-		WHERE user_id = $1
+		SELECT orders.id, orders.user_id, orders.market_id, orders.order_type, orders.side, orders.price, orders.quantity, orders.status, orders.created_at, orders.filled_quantity,markets.base_asset, markets.quote_asset
+		FROM orders INNER JOIN markets ON orders.market_id = markets.id
+		WHERE orders.user_id = $1 AND (orders.status='open' OR orders.status='partially_filled')
+		ORDER BY orders.created_at DESC
 	`, userId)
 	if err != nil {
-		log.Printf("%s GetOrdersByUserID: query failed for userID=%s: %v", orderTag, userId, err)
+		log.Printf("%s GetActiveOrdersByUserID: query failed for userID=%s: %v", orderTag, userId, err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -62,14 +95,14 @@ func (q *Queries) GetOrdersByUserID(userId string) ([]models.Order, error) {
 		var o models.Order
 		if err := rows.Scan(
 			&o.ID, &o.UserID, &o.MarketID, &o.OrderType, &o.Side,
-			&o.Price, &o.Quantity, &o.Status, &o.CreatedAt, &o.FilledQuantity,
+			&o.Price, &o.Quantity, &o.Status, &o.CreatedAt, &o.FilledQuantity, &o.BaseAsset, &o.QuoteAsset,
 		); err != nil {
-			log.Printf("%s GetOrdersByUserID: failed to scan row for userID=%s: %v", orderTag, userId, err)
+			log.Printf("%s GetActiveOrdersByUserID: failed to scan row for userID=%s: %v", orderTag, userId, err)
 			return nil, err
 		}
 		orders = append(orders, o)
 	}
-	log.Printf("%s GetOrdersByUserID: returned %d order(s) for userID=%s", orderTag, len(orders), userId)
+	log.Printf("%s GetActiveOrdersByUserID: returned %d order(s) for userID=%s", orderTag, len(orders), userId)
 	return orders, nil
 }
 
@@ -206,6 +239,20 @@ func (q *Queries) UpdateOrderStatusAndQuantity(id, status string, filledQty floa
 		return err
 	}
 	log.Printf("%s UpdateOrderStatusAndQuantity: successfully updated orderID=%s", orderTag, id)
+	return nil
+}
+
+func (q *Queries) UpdateOrderStatusAndQuantityTx(tx *sql.Tx, id, status string, filledQty float64) error {
+	log.Printf("%s UpdateOrderStatusAndQuantityTx: orderID=%s status=%s filledQty=%f", orderTag, id, status, filledQty)
+	_, err := tx.Exec(`
+		UPDATE orders
+		SET status = $1, filled_quantity = $2
+		WHERE id = $3
+	`, status, filledQty, id)
+	if err != nil {
+		log.Printf("%s UpdateOrderStatusAndQuantityTx: failed for orderID=%s: %v", orderTag, id, err)
+		return err
+	}
 	return nil
 }
 

@@ -1,8 +1,10 @@
 package controllers
 
 import (
+	"context"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/Blaze5333/cex/db/queries"
 	"github.com/Blaze5333/cex/internal/db"
@@ -26,30 +28,17 @@ func CreateOrder(q *queries.Queries, redisClient *db.RedisConfig, matchingConfig
 	return func(c *gin.Context) {
 		log.Printf("%s CreateOrder: handling create order request", orderCtrlTag)
 		var req models.CreateOrderRequest
-		dbTxn, err := q.GetDB().Begin()
-		if err != nil {
-			log.Printf("%s CreateOrder: failed to begin database transaction: %v", orderCtrlTag, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to start database transaction"})
-			return
-		}
-		defer func() {
-			if p := recover(); p != nil {
-				dbTxn.Rollback()
-				panic(p)
-			} else if err != nil {
-				log.Printf("%s CreateOrder: rolling back transaction due to error: %v", orderCtrlTag, err)
-				dbTxn.Rollback()
-			} else {
-				err = dbTxn.Commit()
-				if err != nil {
-					log.Printf("%s CreateOrder: failed to commit transaction: %v", orderCtrlTag, err)
-				}
-			}
-		}()
 		if err := c.ShouldBindJSON(&req); err != nil {
 			log.Printf("%s CreateOrder: invalid request body: %v", orderCtrlTag, err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "message": "Invalid request"})
 			return
+		}
+		if req.Amount != 0 {
+			req.Price = req.Amount
+		}
+		if req.OrderType == string(models.MARKET) && req.Side == "buy" {
+			req.Quantity = 100000
+			req.Price = req.Amount
 		}
 		userId, exists := c.Get("user_id")
 		if !exists {
@@ -66,32 +55,80 @@ func CreateOrder(q *queries.Queries, redisClient *db.RedisConfig, matchingConfig
 			return
 		}
 		var asset string
+		var quantityToLock float64
 		if req.Side == "buy" {
 			asset = market.QuoteAsset
+			if req.OrderType == string(models.MARKET) {
+				quantityToLock = req.Amount
+			} else {
+				quantityToLock = req.Price * req.Quantity
+			}
+			log.Printf("%s CreateOrder: calculated quote asset quantity to lock for buy order: price=%f quantity=%f total=%f", orderCtrlTag, req.Price, req.Quantity, quantityToLock)
+			if quantityToLock <= 0 {
+				log.Printf("%s CreateOrder: invalid total cost to lock for buy order: price=%f quantity=%f total=%f", orderCtrlTag, req.Price, req.Quantity, quantityToLock)
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid total cost to lock", "message": "Price and quantity must be greater than zero"})
+				return
+			}
 		} else {
 			asset = market.BaseAsset
+			quantityToLock = req.Quantity
+			log.Printf("%s CreateOrder: calculated base asset quantity to lock for sell order: quantity=%f", orderCtrlTag, quantityToLock)
 		}
-		log.Printf("%s CreateOrder: locking balance for userID=%s asset=%s quantity=%f side=%s", orderCtrlTag, userId.(string), asset, req.Quantity, req.Side)
-		err = q.LockBalance(userId.(string), asset, req.Quantity)
+
+		dbTxn, err := q.GetDB().BeginTx(c.Request.Context(), nil)
+		if err != nil {
+			log.Printf("%s CreateOrder: failed to begin database transaction: %v", orderCtrlTag, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to start database transaction"})
+			return
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				if rollbackErr := dbTxn.Rollback(); rollbackErr != nil {
+					log.Printf("%s CreateOrder: rollback failed: %v", orderCtrlTag, rollbackErr)
+				}
+			}
+		}()
+
+		log.Printf("%s CreateOrder: locking balance for userID=%s asset=%s quantity=%f side=%s", orderCtrlTag, userId.(string), asset, quantityToLock, req.Side)
+		err = q.LockBalanceTx(dbTxn, userId.(string), asset, quantityToLock)
 		if err != nil {
 			log.Printf("%s CreateOrder: failed to lock balance for userID=%s asset=%s: %v", orderCtrlTag, userId.(string), asset, err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "message": "Failed to lock balance"})
 			return
 		}
 		log.Printf("%s CreateOrder: creating order for userID=%s marketID=%s type=%s side=%s price=%f quantity=%f", orderCtrlTag, userId.(string), req.MarketID, req.OrderType, req.Side, req.Price, req.Quantity)
-		order, err := q.CreateOrder(userId.(string), req.MarketID, req.OrderType, req.Side, req.Price, req.Quantity)
+		order, err := q.CreateOrderTx(dbTxn, userId.(string), req.MarketID, req.OrderType, req.Side, req.Price, req.Quantity)
 		if err != nil {
 			log.Printf("%s CreateOrder: failed to create order for userID=%s marketID=%s: %v", orderCtrlTag, userId.(string), req.MarketID, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to create order"})
 			return
 		}
 		log.Printf("%s CreateOrder: successfully created order id=%s for userID=%s", orderCtrlTag, order.ID, userId.(string))
-		   
-          matchResult:=matchingConfig.MatchOrders(*order)
-		if err := matchingConfig.ApplyOrderResultToDB(c.Request.Context(), matchResult); err != nil {
+		var matchResult matching.OrderResult
+		if req.OrderType == string(models.MARKET) {
+			log.Printf("%s CreateOrder: matching market order id=%s for userID=%s", orderCtrlTag, order.ID, userId.(string))
+			matchResult = matchingConfig.MatchMarketOrders(*order, req.BaseAsset, req.QuoteAsset)
+		} else {
+			log.Printf("%s CreateOrder: matching limit order id=%s for userID=%s", orderCtrlTag, order.ID, userId.(string))
+			matchResult = matchingConfig.MatchLimitOrders(*order, req.BaseAsset, req.QuoteAsset)
+		}
+		if err := matchingConfig.ApplyOrderResultToDBTx(c.Request.Context(), dbTxn, matchResult); err != nil {
 			log.Printf("%s CreateOrder: failed to apply order result to DB for order id=%s: %v", orderCtrlTag, order.ID, err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to process order"})
 			return
+		}
+		if err := dbTxn.Commit(); err != nil {
+			log.Printf("%s CreateOrder: failed to commit transaction for order id=%s: %v", orderCtrlTag, order.ID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to commit order"})
+			return
+		}
+		committed = true
+
+		redisCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := matchingConfig.ApplyOrderResultToRedis(redisCtx, matchResult); err != nil {
+			log.Printf("%s CreateOrder: order id=%s committed but redis sync failed: %v", orderCtrlTag, order.ID, err)
 		}
 		log.Printf("%s CreateOrder: successfully processed order id=%s", orderCtrlTag, order.ID)
 		c.JSON(http.StatusCreated, gin.H{"id": order.ID})
@@ -110,5 +147,43 @@ func GetOrderBook(q *queries.Queries, redisClient *db.RedisConfig) gin.HandlerFu
 		}
 		log.Printf("%s GetOrderBook: successfully fetched order book for market id=%s", orderCtrlTag, marketId)
 		c.JSON(http.StatusOK, gin.H{"order_book": orderBook})
+	}
+}
+
+func GetUserTrades(q *queries.Queries) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, exists := c.Get("user_id")
+		if !exists {
+			log.Printf("%s GetUserTrades: user_id not found in context", orderCtrlTag)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID not found in context", "message": "Unauthorized"})
+			return
+		}
+		trades, err := q.GetTradesByUserID(userID.(string))
+		if err != nil {
+			log.Printf("%s GetUserTrades: failed to fetch trades for userID=%s: %v", orderCtrlTag, userID.(string), err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to fetch trades"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"trades": trades})
+	}
+}
+
+func GetActiveUserOrders(q *queries.Queries) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, exists := c.Get("user_id")
+		if !exists {
+			log.Printf("%s GetActiveUserOrders: user_id not found in context", orderCtrlTag)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "User ID not found in context", "message": "Unauthorized"})
+			return
+		}
+		log.Printf("%s GetActiveUserOrders: fetching active orders for userID=%s", orderCtrlTag, userID.(string))
+		orders, err := q.GetActiveOrdersByUserID(userID.(string))
+		if err != nil {
+			log.Printf("%s GetActiveUserOrders: failed to fetch active orders for userID=%s: %v", orderCtrlTag, userID.(string), err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "message": "Failed to fetch active orders"})
+			return
+		}
+		log.Printf("%s GetActiveUserOrders: returning %d active order(s) for userID=%s", orderCtrlTag, len(orders), userID.(string))
+		c.JSON(http.StatusOK, gin.H{"orders": orders})
 	}
 }
